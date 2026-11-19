@@ -24,7 +24,7 @@ final class HomeController: ToolWindow, NSTextFieldDelegate {
         let browse = ClosureButton(L.t("Обзор…", "Browse...")) { [weak self] in self?.browse() }
 
         let groups: [[Command]] = [
-            [.commit, .pull, .push, .fetch],
+            [.sync, .commit, .pull, .fetch, .push],
             [.log, .status, .diff, .blame],
             [.add, .revert, .rename, .remove],
             [.switchBranch, .merge, .branch, .tag],

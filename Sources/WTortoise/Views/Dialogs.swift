@@ -612,3 +612,99 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
         return [args + ["--", source, (target as NSString).expandingTildeInPath]]
     }
 }
+
+/// «Синхронизация»: получить, извлечь и отправить из одного окна. Окно остаётся открытым между командами.
+final class SyncDialog: ToolWindow {
+    private let repo: String
+    private var local: NSComboBox!
+    private var remote: NSPopUpButton!
+    private let remoteBranch = UI.field(placeholder: L.t("как локальная", "same as local"))
+    private let state = UI.label("", color: .secondaryLabelColor)
+    private let hasUpstream: Bool
+
+    init(repo: String) {
+        self.repo = repo
+        let upstream = Git.upstream(repo)
+        hasUpstream = upstream != nil
+        super.init(title: ToolWindow.title(repo, L.t("Синхронизация", "Git Synchronization")),
+                   size: NSSize(width: 560, height: 200), resizable: false)
+        let remotes = Git.remotes(repo)
+        local = UI.combo(Git.localBranches(repo), value: Git.currentBranch(repo) ?? "")
+        remote = UI.popup(remotes, selected: upstream?.remote ?? "origin")
+        remoteBranch.stringValue = upstream?.branch ?? ""
+        let form = Form()
+        form.row(L.t("Локальная ветка:", "Local Branch:"), local)
+        form.row(L.t("Сервер:", "Remote URL:"), remote)
+        form.row(L.t("Ветка на сервере:", "Remote Branch:"), remoteBranch)
+        form.wide(state)
+        install(form.grid, buttons: [
+            ClosureButton(Command.pull.plainTitle) { [weak self] in self?.pull() },
+            ClosureButton(Command.fetch.plainTitle) { [weak self] in self?.fetch() },
+            ClosureButton(Command.push.plainTitle) { [weak self] in self?.push() },
+            ClosureButton(Command.commit.title) { [repo] in CommitController(repo: repo, specs: []).present() },
+            ClosureButton(Command.log.title) { [repo] in LogController(repo: repo, specs: []).present() },
+            closeButton,
+        ])
+        watch(repo) { [weak self] in self?.refresh() }
+        refresh()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// Сервер, локальная ветка и ветка на сервере; nil — чего-то не хватает (о чём уже сказано).
+    private func target() -> (remote: String, local: String, branch: String)? {
+        guard let remoteName = remote.titleOfSelectedItem else {
+            UI.alert(L.t("У хранилища нет серверов.", "This repository has no remotes."),
+                     info: L.t("Добавьте сервер: git remote add origin <адрес>.", "Add one first: git remote add origin <url>."))
+            return nil
+        }
+        let branch = local.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !branch.isEmpty else {
+            UI.alert(L.t("Не заполнено: локальная ветка", "Missing: local branch"))
+            return nil
+        }
+        let other = remoteBranch.stringValue.trimmingCharacters(in: .whitespaces)
+        return (remoteName, branch, other.isEmpty ? branch : other)
+    }
+
+    private func pull() {
+        guard let t = target() else { return }
+        // Без явного выбора git отказывается сливать разошедшиеся ветки.
+        ProgressController.run(title: Command.pull.plainTitle, dir: repo,
+                               steps: [["pull", "--progress", "--no-rebase", t.remote, t.branch]])
+    }
+
+    private func fetch() {
+        guard let t = target() else { return }
+        ProgressController.run(title: Command.fetch.plainTitle, dir: repo, steps: [["fetch", "--progress", "--prune", t.remote]])
+    }
+
+    private func push() {
+        guard let t = target() else { return }
+        var args = ["push", "--progress"]
+        // Ветка ещё ни за чем не следит — запоминаем, куда отправили.
+        if !hasUpstream { args.append("-u") }
+        ProgressController.run(title: Command.push.plainTitle, dir: repo,
+                               steps: [args + [t.remote, t.local == t.branch ? t.local : "\(t.local):\(t.branch)"]])
+    }
+
+    /// Насколько разошлись локальная ветка и ветка сервера — по тому, что известно после последнего Fetch.
+    private func refresh() {
+        guard let remoteName = remote.titleOfSelectedItem else {
+            state.stringValue = L.t("У хранилища нет серверов.", "This repository has no remotes.")
+            return
+        }
+        let branch = local.stringValue.trimmingCharacters(in: .whitespaces)
+        let other = remoteBranch.stringValue.trimmingCharacters(in: .whitespaces)
+        let tracking = "\(remoteName)/\(other.isEmpty ? branch : other)"
+        let counts = Git.run(["rev-list", "--left-right", "--count", "\(branch)...\(tracking)"], in: repo)
+        let parts = counts.trimmed.split(whereSeparator: { $0 == "\t" || $0 == " " }).compactMap { Int($0) }
+        guard counts.ok, parts.count == 2 else {
+            state.stringValue = L.t("Ветки \(tracking) у вас ещё нет: её создаст Push или покажет Fetch.",
+                                    "\(tracking) is not known here yet: Push creates it, Fetch finds it.")
+            return
+        }
+        state.stringValue = L.t("К отправке: \(parts[0]), к получению: \(parts[1]) (по данным последнего Fetch)",
+                                "Out commits: \(parts[0]), in commits: \(parts[1]) (as of the last fetch)")
+    }
+}

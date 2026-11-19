@@ -18,10 +18,10 @@ No big repository browser to keep open — Finder is the browser.
 
 ## Features
 
-- **Finder menu**, laid out like on Windows. Inside a working tree: *Git Pull…*, *Git Fetch…*,
-  *Git Commit -> "branch"…* and a **WTortoise** group with Push, Show log, Check for
-  modifications, Diff, Blame, Add, Revert, Switch/Checkout, Merge, Create Branch, Create Tag, Stash and Stash
-  Pop. Outside one: *Git Clone…* and *Git Create repository here…*.
+- **Finder menu**, laid out like on Windows. Inside a working tree: *Git Sync…*,
+  *Git Commit -> "branch"…* and a **WTortoise** group with Pull, Fetch, Push, Diff, Show log, Check for
+  modifications, Stash, Rename, Delete, Revert, Switch/Checkout, Merge, Create Branch, Create Tag,
+  Add and Blame, in TortoiseGit's order. Outside one: *Git Clone…* and *Git Create repository here…*.
 - **The same menu and status badges in [WExplorer](https://github.com/opewix/wexplorer)**, the
   Windows-style file manager: it shows them on its own once WTortoise is installed.
 - **Status badges** on files and folders in Finder: unchanged, modified, added, conflicted.

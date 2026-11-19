@@ -110,6 +110,7 @@ enum Dispatcher {
                 return UI.alert(L.t("Выберите файлы или папки внутри рабочей копии.", "Select files or folders inside the working tree."))
             }
             RemoveDialog(repo: repo, paths: specs).present()
+        case .sync: SyncDialog(repo: repo).present()
         case .push: PushDialog(repo: repo).present()
         case .pull: PullDialog(repo: repo).present()
         case .fetch: FetchDialog(repo: repo).present()

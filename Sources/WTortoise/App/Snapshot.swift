@@ -25,6 +25,7 @@ enum Snapshot {
         add("log", LogController(repo: repo, specs: []))
         add("status", StatusController(repo: repo, specs: []))
         add("push", PushDialog(repo: repo))
+        add("sync", SyncDialog(repo: repo))
         add("switch", SwitchDialog(repo: repo))
         add("branch", BranchDialog(repo: repo))
         add("remove", RemoveDialog(repo: repo, paths: ["README.md", "user.swift"]))

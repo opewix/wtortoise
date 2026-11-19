@@ -3,7 +3,7 @@ import Foundation
 /// Команды программы. Общие для приложения и расширения Finder: расширение строит из них меню
 /// и зовёт приложение ссылкой `wtortoise://<команда>?path=…`.
 enum Command: String, CaseIterable {
-    case commit, pull, fetch, push
+    case sync, commit, pull, fetch, push
     case diff, log, status, blame
     case add, revert, rename, remove = "delete"
     case switchBranch = "switch", merge, branch, tag
@@ -15,6 +15,7 @@ enum Command: String, CaseIterable {
 
     var title: String {
         switch self {
+        case .sync: return L.t("Синхронизация…", "Sync...")
         case .commit: return L.t("Фиксация…", "Commit...")
         case .pull: return L.t("Получить (Pull)…", "Pull...")
         case .fetch: return L.t("Извлечь (Fetch)…", "Fetch...")
@@ -42,6 +43,7 @@ enum Command: String, CaseIterable {
 
     var glyph: Glyph {
         switch self {
+        case .sync: return .sync
         case .commit: return .commit
         case .pull: return .pull
         case .fetch: return .fetch
@@ -67,10 +69,11 @@ enum Command: String, CaseIterable {
         }
     }
 
-    /// Группа «WTortoise» контекстного меню; Pull, Fetch и Commit стоят над ней отдельными пунктами.
+    /// Группа «WTortoise» контекстного меню; «Git Sync…» и «Git Commit…» стоят над ней отдельными пунктами.
     static let submenuGroups: [[Command]] = [
-        [.push], [.log, .status, .diff, .blame], [.add, .revert, .rename, .remove],
-        [.switchBranch, .merge, .branch, .tag], [.stashSave, .stashPop], [.clone], [.settings, .about],
+        // Порядок и разделители — как в подменю TortoiseGit (таблица MenuInfo.cpp его расширения оболочки).
+        [.pull, .fetch, .push], [.diff], [.log, .status, .stashSave, .stashPop], [.rename, .remove, .revert],
+        [.switchBranch, .merge, .branch, .tag], [.add, .blame], [.clone], [.settings, .about],
     ]
 
     /// Название пункта, стоящего прямо в контекстном меню, а не в группе: с «Git» впереди, как в оригинале.
