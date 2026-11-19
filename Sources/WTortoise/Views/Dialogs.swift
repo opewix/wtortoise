@@ -137,9 +137,10 @@ final class PushDialog: FormDialog {
     private var local: NSComboBox!
     private let remoteBranch = UI.field(placeholder: L.t("как локальная", "same as local"))
     private var remote: NSPopUpButton!
-    private let force = UI.check(L.t("Принудительно, если на сервере нет чужих изменений (--force-with-lease)", "Force, unless the remote has new commits (--force-with-lease)"))
+    private let force = UI.check(L.t("Принудительно, если на сервере нет чужих изменений (--force-with-lease)", "Force with lease"))
+    private let forceAny = UI.check(L.t("Принудительно, затирая и чужие изменения (--force)", "Force"))
     private let tags = UI.check(L.t("Вместе с метками", "Include Tags"))
-    private let setUpstream = UI.check(L.t("Запомнить ветку сервера для отслеживания", "Set upstream / track remote branch"))
+    private let setUpstream = UI.check(L.t("Запомнить ветку сервера для отслеживания", "Set upstream/track remote branch"))
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Отправить", "Push"))
@@ -156,6 +157,7 @@ final class PushDialog: FormDialog {
         form.row(L.t("Сервер:", "Remote:"), remote)
         form.section(L.t("Параметры", "Options"))
         form.wide(force)
+        form.wide(forceAny)
         form.wide(tags)
         form.wide(setUpstream)
         finish()
@@ -171,7 +173,14 @@ final class PushDialog: FormDialog {
         }
         guard let branch = required(local.stringValue, L.t("локальная ветка", "local branch")) else { return nil }
         var args = ["push", "--progress"]
-        if force.state == .on { args.append("--force-with-lease") }
+        if forceAny.state == .on {
+            guard UI.confirm(L.t("Отправить принудительно?", "Force push?"),
+                             info: L.t("Фиксации на сервере, которых нет у вас, будут потеряны.", "Commits on the remote that you do not have will be lost."),
+                             ok: L.t("Отправить принудительно", "Force Push")) else { return nil }
+            args.append("--force")
+        } else if force.state == .on {
+            args.append("--force-with-lease")
+        }
         if tags.state == .on { args.append("--tags") }
         if setUpstream.state == .on { args.append("-u") }
         let target = remoteBranch.stringValue.trimmingCharacters(in: .whitespaces)
@@ -184,9 +193,9 @@ final class PullDialog: FormDialog {
     private var remote: NSPopUpButton!
     private var branch: NSComboBox!
     private let rebase = UI.check(L.t("Перенести свои фиксации поверх (rebase)", "Rebase"))
-    private let ffOnly = UI.check(L.t("Только перемотка (--ff-only)", "Fast-forward only"))
+    private let ffOnly = UI.check(L.t("Только перемотка (--ff-only)", "Fast Forward Only"))
     private let prune = UI.check(L.t("Убрать ветки, удалённые на сервере (--prune)", "Prune"))
-    private let tags = UI.check(L.t("Получить метки", "Fetch Tags"))
+    private let tags = UI.check(L.t("Получить метки", "Tags"))
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Получить", "Pull"))
@@ -226,7 +235,7 @@ final class PullDialog: FormDialog {
 final class FetchDialog: FormDialog {
     private var remote: NSPopUpButton!
     private let prune = UI.check(L.t("Убрать ветки, удалённые на сервере (--prune)", "Prune"), on: true)
-    private let tags = UI.check(L.t("Получить метки", "Fetch Tags"))
+    private let tags = UI.check(L.t("Получить метки", "Tags"))
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Извлечь", "Fetch"))
@@ -251,7 +260,7 @@ final class FetchDialog: FormDialog {
 
 final class SwitchDialog: FormDialog {
     private var chooser: RefChooser!
-    private let create = UI.check(L.t("Создать новую ветку:", "Create New Branch:"))
+    private let create = UI.check(L.t("Создать новую ветку:", "Create New Branch"))
     private let name = UI.field(width: 220)
     private let track = UI.check(L.t("Следить за веткой сервера", "Track"))
     private let force = UI.check(L.t("Затереть изменения рабочей копии (--force)", "Overwrite working tree changes (force)"))
@@ -262,7 +271,7 @@ final class SwitchDialog: FormDialog {
         chooser.onChange = { [weak self] in self?.suggest() }
         form.section(L.t("Переключиться на", "Switch To"))
         form.wide(chooser.view)
-        form.section(L.t("Параметры", "Options"))
+        form.section(L.t("Параметры", "Option"))
         form.grid.addRow(with: [create, name])
         form.wide(track)
         form.wide(force)
@@ -311,7 +320,7 @@ final class BranchDialog: FormDialog {
     init(repo: String, preset: String? = nil) {
         super.init(repo: repo, name: L.t("Создать ветку", "Create Branch"))
         chooser = RefChooser(repo: repo, allowHead: true, preset: preset)
-        form.row(L.t("Имя ветки:", "Branch:"), name)
+        form.row(L.t("Имя ветки:", "Branch"), name)
         form.section(L.t("От чего", "Base On"))
         form.wide(chooser.view)
         form.section(L.t("Параметры", "Options"))
@@ -347,7 +356,7 @@ final class TagDialog: FormDialog {
         form.section(L.t("На чём", "Base On"))
         form.wide(chooser.view)
         form.section(L.t("Параметры", "Options"))
-        form.row(L.t("Сообщение:", "Message:"), message)
+        form.row(L.t("Сообщение:", "Message"), message)
         form.wide(force)
         finish()
         window?.initialFirstResponder = name
@@ -375,13 +384,13 @@ final class MergeDialog: FormDialog {
     init(repo: String) {
         super.init(repo: repo, name: L.t("Слить", "Merge"))
         chooser = RefChooser(repo: repo, allowHead: false)
-        form.section(L.t("Слить в «\(Git.headName(repo))» из", "Merge into “\(Git.headName(repo))” from"))
+        form.section(L.t("Слить в «\(Git.headName(repo))» из", "From"))
         form.wide(chooser.view)
-        form.section(L.t("Параметры", "Options"))
+        form.section(L.t("Параметры", "Option"))
         form.wide(squash)
         form.wide(noFF)
         form.wide(noCommit)
-        form.row(L.t("Сообщение:", "Message:"), message)
+        form.row(L.t("Сообщение слияния:", "Merge Message"), message)
         finish()
     }
 
@@ -409,13 +418,13 @@ final class ResetDialog: FormDialog {
     init(repo: String, commit: Commit) {
         self.commit = commit
         super.init(repo: repo, name: L.t("Сброс", "Reset"))
-        form.wide(UI.label(L.t("Сбросить «\(Git.headName(repo))» на:", "Reset “\(Git.headName(repo))” to:")))
+        form.wide(UI.label(L.t("Сбросить «\(Git.headName(repo))» на:", "Current branch: \(Git.headName(repo))")))
         form.wide(UI.label("\(commit.hash.prefix(8))  \(commit.subject)", bold: true))
         form.section(L.t("Вид сброса", "Reset Type"))
         let titles = [
-            L.t("Мягкий: рабочая копия и индекс остаются", "Soft: leave working tree and index untouched"),
-            L.t("Смешанный: рабочая копия остаётся, индекс сбрасывается", "Mixed: leave working tree untouched, reset index"),
-            L.t("Жёсткий: сбросить всё, изменения рабочей копии пропадут", "Hard: reset working tree and index (discard all local changes)"),
+            L.t("Мягкий: рабочая копия и индекс остаются", "Soft: Leave working tree and index untouched"),
+            L.t("Смешанный: рабочая копия остаётся, индекс сбрасывается", "Mixed: Leave working tree untouched, reset index"),
+            L.t("Жёсткий: сбросить всё, изменения рабочей копии пропадут", "Hard: Reset working tree and index (discard all local changes)"),
         ]
         let group = UI.column(titles.map { title in
             let radio = NSButton(radioButtonWithTitle: title, target: self, action: #selector(pick))
@@ -443,11 +452,11 @@ final class ResetDialog: FormDialog {
 
 final class StashDialog: FormDialog {
     private let message = UI.field(placeholder: L.t("необязательно", "optional"))
-    private let untracked = UI.check(L.t("Вместе с файлами не под версией", "Include untracked"))
+    private let untracked = UI.check(L.t("Вместе с файлами не под версией", "include untracked"))
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Спрятать изменения", "Stash"))
-        form.row(L.t("Сообщение:", "Message:"), message)
+        form.row(L.t("Сообщение:", "Stash Message"), message)
         form.wide(untracked)
         finish()
     }
@@ -540,11 +549,11 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
         }
         url.delegate = self
         directory.delegate = self
-        let browse = ClosureButton(L.t("Обзор…", "Browse…")) { [weak self] in self?.browse() }
+        let browse = ClosureButton(L.t("Обзор…", "Browse...")) { [weak self] in self?.browse() }
         form.row("URL:", url)
         form.row(L.t("Папка:", "Directory:"), UI.row([directory, browse]))
-        form.row(L.t("Ветка:", "Branch:"), branch)
-        form.row(L.t("Глубина:", "Depth:"), depth)
+        form.row(L.t("Ветка:", "Branch"), branch)
+        form.row(L.t("Глубина:", "Depth"), depth)
         form.wide(recursive)
         finish()
         suggestDirectory()

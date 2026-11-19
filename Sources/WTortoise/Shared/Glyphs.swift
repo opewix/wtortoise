@@ -52,6 +52,74 @@ private func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, fill: N
     if let stroke { stroke.setStroke(); p.lineWidth = 1.2; p.stroke() }
 }
 
+private func curve(_ from: (CGFloat, CGFloat), _ c1: (CGFloat, CGFloat), _ c2: (CGFloat, CGFloat), _ to: (CGFloat, CGFloat),
+                   _ color: NSColor, _ width: CGFloat) {
+    let p = NSBezierPath()
+    p.move(to: NSPoint(x: from.0, y: from.1))
+    p.curve(to: NSPoint(x: to.0, y: to.1), controlPoint1: NSPoint(x: c1.0, y: c1.1), controlPoint2: NSPoint(x: c2.0, y: c2.1))
+    p.lineWidth = width
+    p.lineCapStyle = .round
+    color.setStroke()
+    p.stroke()
+}
+
+/// Жёлтый «бочонок» — хранилище.
+private func cylinder(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) {
+    let e = w * 0.34, edge = NSColor(hex: 0xB58E00)
+    let body = NSBezierPath()
+    body.move(to: NSPoint(x: x, y: y + h - e / 2))
+    body.line(to: NSPoint(x: x, y: y + e / 2))
+    body.curve(to: NSPoint(x: x + w, y: y + e / 2), controlPoint1: NSPoint(x: x, y: y - e * 0.17), controlPoint2: NSPoint(x: x + w, y: y - e * 0.17))
+    body.line(to: NSPoint(x: x + w, y: y + h - e / 2))
+    body.close()
+    NSGradient(colors: [NSColor(hex: 0xE2B400), NSColor(hex: 0xFFE861), NSColor(hex: 0xE8BC00)])?.draw(in: body, angle: 0)
+    edge.setStroke()
+    body.lineWidth = 0.6
+    body.stroke()
+    let top = NSBezierPath(ovalIn: NSRect(x: x, y: y + h - e, width: w, height: e))
+    NSColor(hex: 0xFFF08A).setFill()
+    top.fill()
+    top.lineWidth = 0.6
+    top.stroke()
+    if h > 5 {
+        let band = NSBezierPath()
+        band.move(to: NSPoint(x: x, y: y + h * 0.48))
+        band.curve(to: NSPoint(x: x + w, y: y + h * 0.48), controlPoint1: NSPoint(x: x, y: y + h * 0.48 - e * 0.67),
+                   controlPoint2: NSPoint(x: x + w, y: y + h * 0.48 - e * 0.67))
+        band.lineWidth = 0.5
+        band.stroke()
+    }
+}
+
+/// Серый шкафчик с ящиками — рабочая копия.
+private func cabinet(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) {
+    box(x, y, w, h, fill: NSColor(hex: 0xD3D8DE), stroke: NSColor(hex: 0x6F7780))
+    let drawer = h / 3
+    for i in 0..<3 {
+        let dy = y + CGFloat(i) * drawer
+        box(x + 1, dy + 1, w - 2, drawer - 1.4, fill: NSColor(hex: 0xF1F3F5), stroke: nil)
+        stroke([(x + w / 2 - 1, dy + drawer / 2 + 0.2), (x + w / 2 + 1, dy + drawer / 2 + 0.2)], NSColor(hex: 0x6F7780), 0.8)
+    }
+}
+
+private func star(_ cx: CGFloat, _ cy: CGFloat, _ r: CGFloat, _ color: NSColor) {
+    var points: [(CGFloat, CGFloat)] = []
+    for i in 0..<10 {
+        let a = CGFloat.pi / 2 + CGFloat(i) * .pi / 5, radius = i % 2 == 0 ? r : r * 0.45
+        points.append((cx + cos(a) * radius, cy + sin(a) * radius))
+    }
+    fill(points, color)
+    stroke(points, NSColor(white: 0, alpha: 0.25), 0.4, close: true)
+}
+
+/// Синий лоток — «спрятанное».
+private func tray() {
+    let tone = NSColor(hex: 0x3A7BE0)
+    fill([(1.2, 7), (4.6, 7), (5.6, 5), (10.4, 5), (11.4, 7), (14.8, 7), (14.8, 1.2), (1.2, 1.2)], tone)
+    stroke([(1.6, 7), (4, 11.2)], tone, 1.1)
+    stroke([(14.4, 7), (12, 11.2)], tone, 1.1)
+}
+
 /// Стрелка вверх или вниз по центру значка.
 private func arrow(up: Bool, _ color: NSColor, x: CGFloat = 8, from: CGFloat = 3.5, to: CGFloat = 13, hollow: Bool = false) {
     let tip = up ? to : from, tail = up ? from : to, d: CGFloat = up ? -1 : 1
@@ -81,95 +149,128 @@ enum Glyph: String {
     }
 
     private func draw() {
+        let navy = NSColor(hex: 0x2850C8), leaf = NSColor(hex: 0x3FA63A)
         switch self {
         case .commit:
-            arrow(up: true, green, from: 5, to: 14.5)
-            stroke([(2.5, 5.5), (2.5, 2), (13.5, 2), (13.5, 5.5)], gray, 1.5)
-        case .push:
-            arrow(up: true, red, from: 2, to: 11.5)
-            stroke([(3, 14), (13, 14)], gray, 1.6)
+            // Зелёная стрелка, заворачивающая вправо.
+            curve((4, 2.2), (4, 8), (6, 10), (10.5, 10), leaf, 3.4)
+            fill([(9.8, 14.6), (15.4, 10), (9.8, 5.4)], leaf)
         case .pull:
-            arrow(up: false, blue, from: 4.5, to: 14)
-            stroke([(3, 2), (13, 2)], gray, 1.6)
+            // Зелёная стрелка вниз к хранилищу.
+            cylinder(9.5, 1, 6, 6.5)
+            curve((12.5, 14), (7.5, 14), (5.8, 11), (5.8, 7.5), leaf, 3)
+            fill([(1.4, 8), (10.2, 8), (5.8, 2.2)], leaf)
         case .fetch:
-            arrow(up: false, blue, from: 4.5, to: 14, hollow: true)
-            stroke([(3, 2), (13, 2)], gray, 1.6)
+            curve((13, 13.6), (8.5, 13.6), (7, 10.5), (7, 7.5), leaf, 3.2)
+            fill([(2.4, 8), (11.6, 8), (7, 1.6)], leaf)
+        case .push:
+            curve((3, 2.4), (7.5, 2.4), (9, 5.5), (9, 8.5), red, 3.2)
+            fill([(4.4, 8), (13.6, 8), (9, 14.4)], red)
         case .diff:
-            box(1.5, 2.5, 5.5, 11, fill: NSColor(hex: 0xFFE0C0), stroke: orange)
-            box(9, 2.5, 5.5, 11, fill: NSColor(hex: 0xFFFFB0), stroke: NSColor(hex: 0xB89A10))
+            // Два скрещённых «пластыря».
+            for angle in [45, -45] as [CGFloat] {
+                NSGraphicsContext.saveGraphicsState()
+                let turn = NSAffineTransform()
+                turn.translateX(by: 8, yBy: 8)
+                turn.rotate(byDegrees: angle)
+                turn.concat()
+                let bar = NSBezierPath(roundedRect: NSRect(x: -7.2, y: -2.6, width: 14.4, height: 5.2), xRadius: 1.2, yRadius: 1.2)
+                NSColor(hex: 0xB4EFA0).setFill()
+                bar.fill()
+                NSColor(hex: 0x2E8B2E).setStroke()
+                bar.lineWidth = 0.9
+                bar.stroke()
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            for (x, y) in [(8, 9.3), (8, 6.7), (6.7, 8), (9.3, 8)] as [(CGFloat, CGFloat)] { dot(x, y, 0.75, .white) }
         case .log:
-            for y in [12.5, 8, 3.5] as [CGFloat] {
-                dot(3, y, 1.5, blue)
-                stroke([(6.5, y), (14, y)], gray, 1.5)
+            // Три строки журнала с «бусинами» правок.
+            let dark = NSColor(hex: 0x555B63)
+            for (y, blocks) in [(12.6, [(2.5, 3.5), (7.2, 2.4), (10.8, 2.4)]), (8, [(5, 3.5), (9.8, 2.4)]),
+                                (3.4, [(2.5, 2.4), (6.2, 3.5), (10.8, 2.4)])] as [(CGFloat, [(CGFloat, CGFloat)])] {
+                stroke([(1, y), (15, y)], dark, 0.9)
+                for (x, w) in blocks { box(x, y - 1.4, w, 2.8, fill: dark, stroke: nil) }
             }
         case .status:
-            ring(6.5, 9.5, 4, blue, 1.8)
-            stroke([(9.5, 6.5), (14, 2)], gray, 2.2)
+            cabinet(1, 5.5, 6.5, 9.5)
+            stroke([(9.5, 13), (15, 13)], NSColor(hex: 0x1F5A8A), 1.6)
+            stroke([(9.5, 10.4), (15, 10.4)], NSColor(hex: 0x1F5A8A), 1.6)
+            cylinder(9, 1, 6.2, 7)
+        case .blame:
+            for (y, color) in [(12.5, blue), (8, green), (3.5, orange)] as [(CGFloat, NSColor)] {
+                box(1.5, y - 1.5, 4, 3, fill: color, stroke: nil)
+                stroke([(7.5, y), (14, y)], gray, 1.5)
+            }
         case .add:
-            stroke([(8, 2.5), (8, 13.5)], blue, 2.6)
-            stroke([(2.5, 8), (13.5, 8)], blue, 2.6)
+            stroke([(8, 2.2), (8, 13.8)], NSColor(hex: 0x3B6FD8), 3.6)
+            stroke([(2.2, 8), (13.8, 8)], NSColor(hex: 0x3B6FD8), 3.6)
         case .revert:
-            let arc = NSBezierPath()
-            arc.appendArc(withCenter: NSPoint(x: 8, y: 7), radius: 5, startAngle: 200, endAngle: 60, clockwise: true)
-            arc.lineWidth = 2
-            arc.lineCapStyle = .round
-            orange.setStroke()
-            arc.stroke()
-            fill([(1.2, 9.2), (6.6, 9.4), (3.6, 13.8)], orange)
+            // Синяя стрелка «назад».
+            curve((10.5, 1.8), (15, 6), (13, 12), (7, 11.2), navy, 2.8)
+            fill([(1.2, 10.4), (8, 15.2), (7.6, 6.6)], navy)
+        case .rename:
+            // Карандаш остриём вниз-влево.
+            fill([(3.4, 5.6), (5.6, 3.4), (12.4, 10.2), (10.2, 12.4)], NSColor(hex: 0xF08A24))
+            fill([(4.5, 4.5), (5.6, 3.4), (12.4, 10.2), (11.3, 11.3)], NSColor(hex: 0xD8641A))
+            fill([(1.6, 1.6), (3.4, 5.6), (5.6, 3.4)], NSColor(hex: 0xF3D7A8))
+            fill([(1.6, 1.6), (2.4, 3.4), (3.4, 2.4)], NSColor(hex: 0x333333))
+            fill([(10.2, 12.4), (12.4, 10.2), (14.4, 12.2), (12.2, 14.4)], NSColor(hex: 0xB9BEC6))
+        case .remove:
+            curve((2.5, 13.5), (6, 11), (10, 6), (13, 2.5), red, 2.8)
+            curve((13.5, 13.5), (10, 11.5), (5.5, 7), (3, 2.8), red, 2.8)
         case .switchBranch:
-            stroke([(2, 11), (12, 11)], green, 1.8)
-            fill([(14.5, 11), (10.5, 14), (10.5, 8)], green)
-            stroke([(14, 5), (4, 5)], blue, 1.8)
-            fill([(1.5, 5), (5.5, 8), (5.5, 2)], blue)
+            cylinder(1, 8, 6.2, 7)
+            cabinet(9, 1, 6, 9)
+            curve((5.5, 9.5), (7.5, 10.5), (9.5, 10.5), (11, 11.8), leaf, 1.8)
+            fill([(9.6, 13.6), (13.4, 11.2), (10.2, 9.4)], leaf)
         case .merge:
-            stroke([(4, 13), (4, 3)], gray, 1.5)
-            stroke([(12, 13), (12, 10), (4, 5)], gray, 1.5)
-            dot(4, 13, 2, blue); dot(12, 13, 2, green); dot(4, 3, 2, blue)
+            stroke([(3, 14.2), (8, 9.2), (13, 14.2)], navy, 2.4)
+            stroke([(8, 9.2), (8, 5)], navy, 2.4)
+            fill([(4.2, 6), (11.8, 6), (8, 1.2)], navy)
         case .branch:
-            stroke([(4, 3), (4, 13)], gray, 1.5)
-            stroke([(4, 6), (12, 9), (12, 13)], gray, 1.5)
-            dot(4, 3, 2, blue); dot(4, 13, 2, blue); dot(12, 13, 2, green)
+            stroke([(4.8, 1.2), (4.8, 11.5)], navy, 2.2)
+            fill([(1.6, 10.6), (8, 10.6), (4.8, 15.2)], navy)
+            stroke([(4.8, 4.2), (10.4, 9.8)], navy, 2.2)
+            star(12, 11.8, 3.6, NSColor(hex: 0xF29A2E))
         case .tag:
             let shape: [(CGFloat, CGFloat)] = [(2, 14), (8.5, 14), (14.5, 8), (8, 1.5), (2, 7.5)]
             fill(shape, yellow)
             stroke(shape, NSColor(hex: 0x9C7A12), 1.2, close: true)
             dot(5, 11, 1.3, .white)
         case .stash:
-            box(2, 2, 12, 7, fill: NSColor(hex: 0xE8D9B5), stroke: NSColor(hex: 0x8A6D2F))
-            arrow(up: false, gray, from: 6.5, to: 15)
+            tray()
+            stroke([(8, 15), (8, 9)], NSColor(hex: 0x2F6FD4), 1.5)
+            stroke([(5.4, 11.2), (8, 8.6), (10.6, 11.2)], NSColor(hex: 0x2F6FD4), 1.5)
         case .stashPop:
-            box(2, 2, 12, 7, fill: NSColor(hex: 0xE8D9B5), stroke: NSColor(hex: 0x8A6D2F))
-            arrow(up: true, green, from: 5.5, to: 15)
+            tray()
+            stroke([(8, 8.6), (8, 15)], NSColor(hex: 0x2F6FD4), 1.5)
+            stroke([(5.4, 12.6), (8, 15.2), (10.6, 12.6)], NSColor(hex: 0x2F6FD4), 1.5)
         case .clone:
-            box(2, 5, 8, 9.5, fill: .white, stroke: gray)
-            box(6, 1.5, 8, 9.5, fill: NSColor(hex: 0xDCE9FB), stroke: blue)
+            cylinder(1, 8.5, 6.2, 6.5)
+            cylinder(8.8, 1, 6.2, 6.5)
+            curve((6.5, 13.2), (10.5, 13.6), (12, 12), (12, 10), leaf, 1.9)
+            fill([(9.4, 10.6), (14.6, 10.6), (12, 7.4)], leaf)
         case .initRepo:
-            box(2, 2, 9.5, 12, fill: .white, stroke: gray)
-            stroke([(11.5, 2.5), (11.5, 8.5)], green, 2.2)
-            stroke([(8.5, 5.5), (14.5, 5.5)], green, 2.2)
+            cylinder(1.5, 1, 10.5, 12)
+            star(11.6, 11.8, 3.9, NSColor(hex: 0xE2533F))
         case .settings:
-            for i in 0..<8 {
-                let a = CGFloat(i) * .pi / 4
-                stroke([(8 + cos(a) * 4, 8 + sin(a) * 4), (8 + cos(a) * 6.3, 8 + sin(a) * 6.3)], gray, 2.4)
-            }
-            ring(8, 8, 3.6, gray, 2.4)
+            // Гаечный ключ.
+            let steel = NSColor(hex: 0x8D949C)
+            stroke([(3.6, 3.6), (10, 10)], steel, 3.2)
+            dot(11.2, 11.2, 3.7, steel)
+            fill([(11.2, 11.2), (16, 13.2), (13.2, 16)], .white)
+            dot(3.4, 3.4, 0.8, .white)
         case .about:
-            dot(8, 8, 6.5, blue)
-            dot(8, 11.6, 1.1, .white)
-            stroke([(8, 9), (8, 4.5)], .white, 1.9)
-        case .blame:
-            for (y, color) in [(12.5, blue), (8, green), (3.5, orange)] as [(CGFloat, NSColor)] {
-                box(1.5, y - 1.5, 4, 3, fill: color, stroke: nil)
-                stroke([(7.5, y), (14, y)], gray, 1.5)
-            }
-        case .rename:
-            box(1.5, 5, 13, 6, fill: .white, stroke: gray)
-            stroke([(5, 2.5), (5, 13.5)], blue, 1.6)
-            stroke([(3.5, 13.5), (6.5, 13.5)], blue, 1.4)
-            stroke([(3.5, 2.5), (6.5, 2.5)], blue, 1.4)
-        case .remove:
-            stroke([(3.5, 3.5), (12.5, 12.5)], red, 2.6)
-            stroke([(3.5, 12.5), (12.5, 3.5)], red, 2.6)
+            let bubble = NSBezierPath(ovalIn: NSRect(x: 1.2, y: 4, width: 13.6, height: 11))
+            bubble.move(to: NSPoint(x: 4.5, y: 5.4))
+            bubble.line(to: NSPoint(x: 3.2, y: 1.2))
+            bubble.line(to: NSPoint(x: 8.2, y: 4.4))
+            NSGradient(starting: NSColor(hex: 0xF4F9FF), ending: NSColor(hex: 0xBBD6F7))?.draw(in: bubble, angle: -90)
+            NSColor(hex: 0x5B8FD9).setStroke()
+            bubble.lineWidth = 0.9
+            bubble.stroke()
+            dot(8.3, 12.2, 1.1, navy)
+            stroke([(8, 9.8), (8, 6.4)], navy, 1.9)
         case .app:
             Glyph.drawTortoise(in: NSRect(x: 0.5, y: 1.5, width: 15, height: 13))
         }

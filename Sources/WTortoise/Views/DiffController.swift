@@ -146,7 +146,7 @@ final class DiffController: ToolWindow {
             args = ["diff", "-U100000", "--cached", "--"] + file.pathspecs
         }
         open(repo: repo, path: file.path, args: args,
-             left: L.t("Базовая версия", "Base"), right: L.t("Рабочая копия", "Working tree"))
+             left: L.t("Базовая версия", "Base"), right: L.t("Рабочая копия", "Working Tree"))
     }
 
     /// Файл в фиксации против её первого родителя.

@@ -127,7 +127,7 @@ final class FileListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         menu.addItem(.separator())
         let revertable = targets.filter { $0.kind != .untracked }
         if !revertable.isEmpty {
-            menu.addItem(ClosureMenuItem(L.t("Убрать изменения…", "Revert…"), glyph: .revert) {
+            menu.addItem(ClosureMenuItem(L.t("Убрать изменения…", "Revert..."), glyph: .revert) {
                 let names = revertable.prefix(8).map(\.path).joined(separator: "\n") + (revertable.count > 8 ? "\n…" : "")
                 guard UI.confirm(L.t("Убрать изменения в файлах (\(revertable.count))?", "Revert changes in \(revertable.count) file(s)?"),
                                  info: L.t("Файлы вернутся к последней фиксации. Отменить это нельзя.\n\n",
@@ -153,7 +153,7 @@ final class FileListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         }
         let conflicted = targets.filter { $0.kind == .conflicted }.map(\.path)
         if !conflicted.isEmpty {
-            menu.addItem(ClosureMenuItem(L.t("Пометить как улаженный", "Mark as resolved")) {
+            menu.addItem(ClosureMenuItem(L.t("Пометить как улаженный", "Resolved")) {
                 Git.run(["add", "--"] + conflicted, in: repo)
                 NotificationCenter.default.post(name: Git.changed, object: repo)
             })
@@ -163,10 +163,10 @@ final class FileListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         menu.addItem(ClosureMenuItem(L.t("Открыть", "Open")) {
             urls.forEach { NSWorkspace.shared.open($0) }
         })
-        menu.addItem(ClosureMenuItem(L.t("Показать в Finder", "Show in Finder")) {
+        menu.addItem(ClosureMenuItem(L.t("Показать в Finder", "Explore to")) {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
         })
-        menu.addItem(ClosureMenuItem(L.t("Скопировать путь", "Copy path")) {
+        menu.addItem(ClosureMenuItem(L.t("Скопировать путь", "Copy paths to clipboard")) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
         })

@@ -291,6 +291,10 @@ class ToolWindow: NSWindowController, NSWindowDelegate {
         ClosureButton(L.t("Отмена", "Cancel"), key: "\u{1b}") { [weak self] in self?.close() }
     }
 
+    var okButton: ClosureButton {
+        ClosureButton("OK", key: "\r") { [weak self] in self?.close() }
+    }
+
     var closeButton: ClosureButton {
         ClosureButton(L.t("Закрыть", "Close"), key: "\u{1b}") { [weak self] in self?.close() }
     }

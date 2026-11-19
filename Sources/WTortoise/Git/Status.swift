@@ -25,7 +25,7 @@ struct FileChange: Hashable {
         case .added: return L.t("Добавлен", "Added")
         case .deleted: return L.t("Удалён", "Deleted")
         case .renamed: return L.t("Переименован", "Renamed")
-        case .untracked: return L.t("Не под версией", "Unversioned")
+        case .untracked: return L.t("Не под версией", "Unknown")
         case .conflicted: return L.t("Конфликт", "Conflicted")
         }
     }

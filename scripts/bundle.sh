@@ -19,6 +19,10 @@ swiftc -O -o build/appicon scripts/appicon/main.swift Sources/WTortoise/Shared/G
 build/appicon "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
+# Значки команд в PNG — для меню других программ (WExplorer берёт их из Resources/MenuIcons).
+swiftc -O -o build/menuicons scripts/menuicons/main.swift Sources/WTortoise/Shared/*.swift
+build/menuicons "$APP/Contents/Resources/MenuIcons"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

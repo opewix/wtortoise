@@ -47,16 +47,16 @@ final class FinderSync: FIFinderSync {
         if let root = RepoPath.root(of: target) {
             // Как в TortoiseGit: три частые команды — прямо в меню, остальное — в группе.
             let branch = RepoPath.branch(root: root) ?? "HEAD"
-            menu.addItem(item(.pull, title: "Git " + Command.pull.title))
-            menu.addItem(item(.fetch, title: "Git " + Command.fetch.title))
+            menu.addItem(item(.pull, title: Command.pull.topLevelTitle))
+            menu.addItem(item(.fetch, title: Command.fetch.topLevelTitle))
             menu.addItem(item(.commit, title: Command.commitTitle(branch: branch)))
             for (index, group) in Command.submenuGroups.enumerated() {
                 if index > 0 { submenu.addItem(.separator()) }
                 group.forEach { submenu.addItem(item($0)) }
             }
         } else {
-            menu.addItem(item(.clone))
-            menu.addItem(item(.initRepo))
+            menu.addItem(item(.clone, title: Command.clone.topLevelTitle))
+            menu.addItem(item(.initRepo, title: Command.initRepo.topLevelTitle))
             submenu.addItem(item(.settings))
             submenu.addItem(item(.about))
         }

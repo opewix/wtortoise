@@ -7,7 +7,7 @@ enum Menus {
         let appMenu = NSMenu()
         appMenu.addItem(ClosureMenuItem(L.t("О программе WTortoise", "About WTortoise")) { About.show() })
         appMenu.addItem(.separator())
-        let settings = ClosureMenuItem(L.t("Настройки…", "Settings…")) { SettingsController.show() }
+        let settings = ClosureMenuItem(L.t("Настройки…", "Settings...")) { SettingsController.show() }
         settings.keyEquivalent = ","
         appMenu.addItem(settings)
         appMenu.addItem(.separator())

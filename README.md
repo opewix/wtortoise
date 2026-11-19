@@ -33,7 +33,7 @@ No big repository browser to keep open — Finder is the browser.
 - **Passwords and SSH passphrases** are asked in a window; credential helpers (the macOS keychain)
   and the SSH agent work as in the terminal.
 - The app runs the `git` you already have, so its behavior matches the command line.
-- English and Russian, following the system language.
+- English by default, with the wording of TortoiseGit; Russian can be turned on in Settings.
 
 ## Install
 

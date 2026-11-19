@@ -15,26 +15,26 @@ enum Command: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .commit: return L.t("Фиксация…", "Commit…")
-        case .pull: return L.t("Получить (Pull)…", "Pull…")
-        case .fetch: return L.t("Извлечь (Fetch)…", "Fetch…")
-        case .push: return L.t("Отправить (Push)…", "Push…")
+        case .commit: return L.t("Фиксация…", "Commit...")
+        case .pull: return L.t("Получить (Pull)…", "Pull...")
+        case .fetch: return L.t("Извлечь (Fetch)…", "Fetch...")
+        case .push: return L.t("Отправить (Push)…", "Push...")
         case .diff: return L.t("Сравнить", "Diff")
         case .log: return L.t("Показать журнал", "Show log")
         case .status: return L.t("Проверить изменения", "Check for modifications")
-        case .add: return L.t("Добавить…", "Add…")
-        case .revert: return L.t("Убрать изменения…", "Revert…")
+        case .add: return L.t("Добавить…", "Add...")
+        case .revert: return L.t("Убрать изменения…", "Revert...")
         case .blame: return L.t("Авторы строк (Blame)", "Blame")
-        case .rename: return L.t("Переименовать…", "Rename…")
-        case .remove: return L.t("Удалить…", "Delete…")
-        case .switchBranch: return L.t("Переключить / Извлечь…", "Switch/Checkout…")
-        case .merge: return L.t("Слить…", "Merge…")
-        case .branch: return L.t("Создать ветку…", "Create Branch…")
-        case .tag: return L.t("Создать метку…", "Create Tag…")
-        case .stashSave: return L.t("Спрятать изменения…", "Stash changes…")
+        case .rename: return L.t("Переименовать…", "Rename...")
+        case .remove: return L.t("Удалить…", "Delete")
+        case .switchBranch: return L.t("Переключить / Извлечь…", "Switch/Checkout...")
+        case .merge: return L.t("Слить…", "Merge...")
+        case .branch: return L.t("Создать ветку…", "Create Branch...")
+        case .tag: return L.t("Создать метку…", "Create Tag...")
+        case .stashSave: return L.t("Спрятать изменения…", "Stash changes")
         case .stashPop: return L.t("Достать спрятанное", "Stash Pop")
-        case .clone: return L.t("Клонировать…", "Git Clone…")
-        case .initRepo: return L.t("Создать здесь хранилище…", "Git Create repository here…")
+        case .clone: return L.t("Клонировать…", "Clone...")
+        case .initRepo: return L.t("Создать здесь хранилище…", "Create repository here...")
         case .settings: return L.t("Настройки", "Settings")
         case .about: return L.t("О программе", "About")
         }
@@ -73,8 +73,16 @@ enum Command: String, CaseIterable {
         [.switchBranch, .merge, .branch, .tag], [.stashSave, .stashPop], [.clone], [.settings, .about],
     ]
 
+    /// Название пункта, стоящего прямо в контекстном меню, а не в группе: с «Git» впереди, как в оригинале.
+    var topLevelTitle: String { "Git " + title }
+
+    /// Название для кнопки: без многоточия.
+    var plainTitle: String {
+        title.replacingOccurrences(of: "...", with: "").replacingOccurrences(of: "…", with: "")
+    }
+
     static func commitTitle(branch: String) -> String {
-        L.t("Git: фиксация в «\(branch)»…", "Git Commit -> “\(branch)”…")
+        L.t("Git: фиксация в «\(branch)»…", "Git Commit -> \"\(branch)\"...")
     }
 
     /// Номер для NSMenuItem.tag: Finder возвращает расширению копию пункта, от которой остаются

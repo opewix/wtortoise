@@ -118,7 +118,7 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         commitTable.allowsMultipleSelection = false
         commitTable.intercellSpacing = NSSize(width: 6, height: 0)
         let (fileScroll, fileTable) = UI.table([
-            ("path", L.t("Путь", "Path"), 600), ("status", L.t("Действие", "Action"), 140),
+            ("path", L.t("Путь", "Path"), 600), ("status", L.t("Действие", "Status"), 140),
         ])
         fileTable.allowsMultipleSelection = false
         let (detailScroll, details) = UI.textView(editable: false)
@@ -143,9 +143,11 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
             view.heightAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
         }
         split.setContentHuggingPriority(.init(1), for: .vertical)
-        split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-        split.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
-        split.setHoldingPriority(.defaultHigh, forSubviewAt: 2)
+        // Удержание размера слабее перетаскивания разделителя (490), иначе разделители не двигаются.
+        // У всех трёх оно одинаковое: разделитель меняет две соседние панели, окно — все три поровну.
+        split.setHoldingPriority(.init(260), forSubviewAt: 0)
+        split.setHoldingPriority(.init(260), forSubviewAt: 1)
+        split.setHoldingPriority(.init(260), forSubviewAt: 2)
 
         search.placeholderString = L.t("Поиск по сообщению, автору, хешу", "Filter by message, author, SHA-1")
         search.delegate = self
@@ -156,15 +158,25 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         allBranches.target = self
         allBranches.action = #selector(reload)
 
-        install(content, buttons: [ClosureButton(L.t("Обновить", "Refresh")) { [weak self] in self?.reload() }, closeButton],
+        install(content, buttons: [ClosureButton(L.t("Обновить", "Refresh")) { [weak self] in self?.reload() }, okButton],
                 leading: [allBranches, countLabel])
         watch(repo) { [weak self] in self?.reload() }
         reload()
-        // Начальные высоты нижних панелей; слабее перетаскивания разделителя, чтобы человек мог их менять.
-        for (view, height) in [(detailScroll, CGFloat(130)), (fileScroll, CGFloat(170))] {
+        // Начальные высоты нижних панелей. Нужны только для первой раскладки: дальше размеры держит сам
+        // разделитель, а оставшись, эти ограничения возвращали бы панели на место после перетаскивания.
+        let initial = [(detailScroll, CGFloat(130)), (fileScroll, CGFloat(170))].map { view, height in
             let preferred = view.heightAnchor.constraint(equalToConstant: height)
             preferred.priority = NSLayoutConstraint.Priority(300)
             preferred.isActive = true
+            return preferred
+        }
+        DispatchQueue.main.async { [split] in
+            split.window?.layoutIfNeeded()
+            let heights = split.arrangedSubviews.map(\.frame.height)
+            NSLayoutConstraint.deactivate(initial)
+            guard heights.count == 3 else { return }
+            split.setPosition(heights[0], ofDividerAt: 0)
+            split.setPosition(heights[0] + split.dividerThickness + heights[1], ofDividerAt: 1)
         }
     }
 
@@ -281,17 +293,17 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         guard row >= 0 else { return }
         let commit = commits[row], repo = self.repo
         let short = String(commit.hash.prefix(8))
-        menu.addItem(ClosureMenuItem(L.t("Переключиться на эту версию…", "Switch/Checkout to this…"), glyph: .switchBranch) {
+        menu.addItem(ClosureMenuItem(L.t("Переключиться на эту версию…", "Switch/Checkout to this..."), glyph: .switchBranch) {
             SwitchDialog(repo: repo, preset: commit.hash).present()
         })
-        menu.addItem(ClosureMenuItem(L.t("Создать ветку от этой версии…", "Create Branch at this version…"), glyph: .branch) {
+        menu.addItem(ClosureMenuItem(L.t("Создать ветку от этой версии…", "Create Branch at this version..."), glyph: .branch) {
             BranchDialog(repo: repo, preset: commit.hash).present()
         })
-        menu.addItem(ClosureMenuItem(L.t("Создать метку на этой версии…", "Create Tag at this version…"), glyph: .tag) {
+        menu.addItem(ClosureMenuItem(L.t("Создать метку на этой версии…", "Create Tag at this version..."), glyph: .tag) {
             TagDialog(repo: repo, preset: commit.hash).present()
         })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(L.t("Сбросить «\(Git.headName(repo))» на эту версию…", "Reset “\(Git.headName(repo))” to this…"), glyph: .revert) {
+        menu.addItem(ClosureMenuItem(L.t("Сбросить «\(Git.headName(repo))» на эту версию…", "Reset \"\(Git.headName(repo))\" to this..."), glyph: .revert) {
             ResetDialog(repo: repo, commit: commit).present()
         })
         menu.addItem(ClosureMenuItem(L.t("Отменить изменения этой фиксации", "Revert change by this commit")) {
@@ -300,7 +312,7 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
                              ok: L.t("Отменить изменения", "Revert")) else { return }
             ProgressController.run(title: "Revert", dir: repo, steps: [["revert", "--no-edit", commit.hash]])
         })
-        menu.addItem(ClosureMenuItem(L.t("Перенести эту фиксацию сюда (cherry-pick)", "Cherry Pick this commit")) {
+        menu.addItem(ClosureMenuItem(L.t("Перенести эту фиксацию сюда (cherry-pick)", "Cherry Pick this commit...")) {
             ProgressController.run(title: "Cherry Pick", dir: repo, steps: [["cherry-pick", commit.hash]])
         })
         menu.addItem(.separator())

@@ -35,7 +35,7 @@ final class ProgressController: ToolWindow {
         self.onFinish = onFinish
         let (scroll, text) = UI.textView(editable: false, mono: true)
         self.text = text
-        super.init(title: ToolWindow.title(dir, title), size: NSSize(width: 640, height: 380))
+        super.init(title: ToolWindow.title(dir, L.t("Ход выполнения команды Git", "Git Command Progress")), size: NSSize(width: 640, height: 380))
         bar.style = .bar
         bar.isIndeterminate = true
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -72,7 +72,8 @@ final class ProgressController: ToolWindow {
             self.endLine()
             if status == 0 {
                 let ms = Int(Date().timeIntervalSince(self.started) * 1000)
-                self.append(L.t("Успешно (\(ms) мс)\n\n", "Success (\(ms) ms)\n\n"), color: NSColor(hex: 0x0032A0), bold: false)
+                let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+                self.append(L.t("Успешно (\(ms) мс @ \(stamp))\n\n", "Success (\(ms) ms @ \(stamp))\n\n"), color: NSColor(hex: 0x0032A0), bold: false)
                 self.next()
             } else {
                 self.finish(status: status)

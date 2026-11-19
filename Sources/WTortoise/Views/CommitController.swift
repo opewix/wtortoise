@@ -138,7 +138,7 @@ final class CommitController: ToolWindow {
         close()
         ProgressController.run(
             title: L.t("Фиксация", "Commit"), dir: repo, steps: steps,
-            extra: push ? [] : [(L.t("Отправить…", "Push…"), { PushDialog(repo: repo).present() })],
+            extra: push ? [] : [(L.t("Отправить…", "Push..."), { PushDialog(repo: repo).present() })],
             onFinish: { ok in
                 try? FileManager.default.removeItem(at: messageFile)
                 if ok && push { PushDialog(repo: repo).present() }
@@ -159,9 +159,9 @@ final class StatusController: ToolWindow {
         list = FileListView(repo: repo, checkable: false)
         super.init(title: ToolWindow.title(repo, L.t("Рабочая копия", "Working Tree")), size: NSSize(width: 760, height: 460))
         install(list, buttons: [
+            ClosureButton(L.t("Фиксация…", "Commit")) { [repo, specs] in CommitController(repo: repo, specs: specs).present() },
             ClosureButton(L.t("Обновить", "Refresh")) { [weak self] in self?.reload() },
-            ClosureButton(L.t("Фиксация…", "Commit…")) { [repo, specs] in CommitController(repo: repo, specs: specs).present() },
-            closeButton,
+            okButton,
         ], leading: [summary])
         watch(repo) { [weak self] in self?.reload() }
         reload()
@@ -195,13 +195,15 @@ final class FilePickController: ToolWindow {
         list = FileListView(repo: repo, checkable: true)
         let name = mode == .add ? L.t("Добавить", "Add") : L.t("Убрать изменения", "Revert")
         super.init(title: ToolWindow.title(repo, name), size: NSSize(width: 720, height: 420))
-        let hint = UI.label(mode == .add
-            ? L.t("Файлы не под версией — отметьте те, что добавить:", "Unversioned files — check the ones to add:")
+        let all = UI.check(L.t("Отметить / снять все", "Select/deselect all"), on: true)
+        all.target = self
+        all.action = #selector(toggleAll(_:))
+        let hint = UI.label(mode == .add ? ""
             : L.t("Отмеченные файлы вернутся к последней фиксации. Отменить это нельзя.",
                   "The checked files go back to the last commit. This cannot be undone."))
-        let content = UI.column([hint, list])
+        let content = UI.column(mode == .add ? [list] : [hint, list])
         list.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        install(content, buttons: [ClosureButton(name, key: "\r") { [weak self] in self?.perform() }, cancelButton])
+        install(content, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.perform() }, cancelButton], leading: [all])
         watch(repo) { [weak self] in self?.reload() }
         reload()
     }
@@ -211,6 +213,11 @@ final class FilePickController: ToolWindow {
     private func reload() {
         let files = Git.status(repo, specs: specs).filter { ($0.kind == .untracked) == (mode == .add) }
         list.show(files, stats: mode == .revert ? Git.numstat(repo) : [:]) { _ in true }
+    }
+
+    @objc private func toggleAll(_ sender: NSButton) {
+        let on = sender.state == .on
+        list.setChecked { _ in on }
     }
 
     private func perform() {

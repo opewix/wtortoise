@@ -21,7 +21,7 @@ final class HomeController: ToolWindow, NSTextFieldDelegate {
         path.stringValue = initial ?? UserDefaults.standard.string(forKey: "lastPath") ?? ""
         path.placeholderString = L.t("Папка рабочей копии", "Working tree folder")
         path.delegate = self
-        let browse = ClosureButton(L.t("Обзор…", "Browse…")) { [weak self] in self?.browse() }
+        let browse = ClosureButton(L.t("Обзор…", "Browse...")) { [weak self] in self?.browse() }
 
         let groups: [[Command]] = [
             [.commit, .pull, .push, .fetch],
@@ -37,7 +37,7 @@ final class HomeController: ToolWindow, NSTextFieldDelegate {
         grid.translatesAutoresizingMaskIntoConstraints = false
         for group in groups {
             grid.addRow(with: group.map { command in
-                let button = ClosureButton(command.title.replacingOccurrences(of: "…", with: "")) { [weak self] in self?.run(command) }
+                let button = ClosureButton(command.plainTitle) { [weak self] in self?.run(command) }
                 button.image = command.glyph.image()
                 button.imagePosition = .imageLeading
                 button.alignment = .left
@@ -46,7 +46,7 @@ final class HomeController: ToolWindow, NSTextFieldDelegate {
             })
         }
 
-        let extensionButton = ClosureButton(L.t("Расширения Finder…", "Finder Extensions…")) {
+        let extensionButton = ClosureButton(L.t("Расширения Finder…", "Finder Extensions...")) {
             FIFinderSyncController.showExtensionManagementInterface()
         }
         let content = UI.column([
@@ -108,6 +108,7 @@ final class SettingsController: ToolWindow {
     private let gitPath = UI.field(Settings.gitPath, placeholder: Git.detected, width: 320)
     private let name = UI.field(Git.config("user.name"), width: 320)
     private let email = UI.field(Git.config("user.email"), width: 320)
+    private let language = UI.popup(["English", "Русский"], selected: L.isRussian ? "Русский" : "English")
 
     static func show() {
         if let existing = ToolWindow.live.first(where: { $0 is SettingsController }) { return existing.showWindow(nil) }
@@ -122,6 +123,9 @@ final class SettingsController: ToolWindow {
         form.section(L.t("Автор фиксаций (общая настройка git)", "Commit author (global git config)"))
         form.row(L.t("Имя:", "Name:"), name)
         form.row("Email:", email)
+        form.section(L.t("Язык", "Language"))
+        form.row(L.t("Язык окон и меню:", "Language:"), language)
+        form.wide(UI.label(L.t("Смена языка действует после перезапуска программы.", "A language change takes effect after the app is restarted."), color: .secondaryLabelColor))
         install(form.grid, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.save() }, cancelButton])
     }
 
@@ -133,6 +137,7 @@ final class SettingsController: ToolWindow {
             return UI.alert(L.t("По этому пути нет исполняемого файла git.", "There is no git executable at this path."), info: custom)
         }
         Settings.gitPath = custom
+        UserDefaults.standard.set(language.indexOfSelectedItem == 1 ? "ru" : "en", forKey: L.languageKey)
         for (key, field, old) in [("user.name", name, Git.config("user.name")), ("user.email", email, Git.config("user.email"))] {
             let value = field.stringValue.trimmingCharacters(in: .whitespaces)
             // Пустое поле не стирает настройку: её могли задать не здесь.
