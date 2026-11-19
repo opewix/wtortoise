@@ -202,6 +202,8 @@ final class LoginDialog: ToolWindow {
     private let password = NSSecureTextField()
     private let rememberBox = UI.check(L.t("Запомнить для этого хранилища", "Remember for this repository"), on: true)
     private let onLogin: (Login, Bool) -> Void
+    private var browserButton: ClosureButton?
+    private let browserNote = UI.label("", color: .secondaryLabelColor)
 
     init(server: String, repo: String, onLogin: @escaping (Login, Bool) -> Void) {
         self.onLogin = onLogin
@@ -210,6 +212,21 @@ final class LoginDialog: ToolWindow {
         password.translatesAutoresizingMaskIntoConstraints = false
         password.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
         let form = Form()
+        if GitHubOAuth.isAvailable(for: server) {
+            // Как в TortoiseGit: вход через сайт, без ввода токена руками.
+            let button = ClosureButton(L.t("Войти через браузер", "Sign in with your browser")) { [weak self] in self?.browserSignIn() }
+            browserButton = button
+            browserNote.lineBreakMode = .byWordWrapping
+            browserNote.maximumNumberOfLines = 0
+            browserNote.preferredMaxLayoutWidth = 420
+            browserNote.isSelectable = true
+            // Место под три строки заранее: окно не меняет размер, когда появляется текст с кодом.
+            browserNote.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+            form.section("GitHub")
+            form.wide(button)
+            form.wide(browserNote)
+            form.section(L.t("Или имя и токен", "Or a username and a token"))
+        }
         form.row(L.t("Имя пользователя:", "Username:"), user)
         form.row(L.t("Пароль или токен:", "Password or token:"), password)
         let hint = UI.label(L.t("GitHub, GitLab и Bitbucket вместо пароля принимают токен доступа (personal access token).",
@@ -225,6 +242,45 @@ final class LoginDialog: ToolWindow {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// Вход через сайт GitHub: показываем код, открываем страницу и ждём разрешения.
+    private func browserSignIn() {
+        browserButton?.isEnabled = false
+        browserNote.stringValue = L.t("Запрашиваю код у GitHub…", "Asking GitHub for a code…")
+        let fail: (Error) -> Void = { [weak self] error in
+            self?.browserNote.stringValue = error.localizedDescription
+            self?.browserButton?.isEnabled = true
+        }
+        GitHubOAuth.requestCode { [weak self] result in
+            guard let self, self.window?.isVisible == true else { return }
+            switch result {
+            case .failure(let error): fail(error)
+            case .success(let device):
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(device.userCode, forType: .string)
+                self.browserNote.stringValue = L.t(
+                    "Введите на открывшейся странице GitHub код \(device.userCode) — он уже скопирован. Жду разрешения…",
+                    "Enter the code \(device.userCode) on the GitHub page that has opened — it is already copied. Waiting for approval…")
+                NSWorkspace.shared.open(device.verificationURL)
+                GitHubOAuth.waitForToken(device, alive: { [weak self] in self?.window?.isVisible == true }) { [weak self] result in
+                    switch result {
+                    case .failure(let error): fail(error)
+                    case .success(let token):
+                        GitHubOAuth.userName(token: token) { [weak self] result in
+                            guard let self, self.window?.isVisible == true else { return }
+                            switch result {
+                            case .failure(let error): fail(error)
+                            case .success(let name):
+                                NSApp.activate(ignoringOtherApps: true)
+                                self.onLogin(Login(user: name, password: token), self.rememberBox.state == .on)
+                                self.close()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private func submit() {
         let name = user.stringValue.trimmingCharacters(in: .whitespaces)
