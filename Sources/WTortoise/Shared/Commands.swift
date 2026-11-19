@@ -69,7 +69,7 @@ enum Command: String, CaseIterable {
 
     /// Группа «WTortoise» контекстного меню; Pull, Fetch и Commit стоят над ней отдельными пунктами.
     static let submenuGroups: [[Command]] = [
-        [.push], [.diff, .log, .status, .blame], [.add, .revert, .rename, .remove],
+        [.push], [.log, .status, .diff, .blame], [.add, .revert, .rename, .remove],
         [.switchBranch, .merge, .branch, .tag], [.stashSave, .stashPop], [.clone], [.settings, .about],
     ]
 

@@ -204,6 +204,10 @@ final class LoginDialog: ToolWindow {
     private let onLogin: (Login, Bool) -> Void
     private var browserButton: ClosureButton?
     private let browserNote = UI.label("", color: .secondaryLabelColor)
+    /// Код для сайта GitHub — крупно и отдельно, с кнопкой «Скопировать».
+    private let codeLabel = NSTextField(labelWithString: "")
+    private var codeRow: NSStackView?
+    private var copyButton: ClosureButton?
 
     init(server: String, repo: String, onLogin: @escaping (Login, Bool) -> Void) {
         self.onLogin = onLogin
@@ -220,10 +224,20 @@ final class LoginDialog: ToolWindow {
             browserNote.maximumNumberOfLines = 0
             browserNote.preferredMaxLayoutWidth = 420
             browserNote.isSelectable = true
-            // Место под три строки заранее: окно не меняет размер, когда появляется текст с кодом.
-            browserNote.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+            // Место под пояснение и код заранее: окно не меняет размер, когда они появляются.
+            browserNote.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
+            codeLabel.font = .monospacedSystemFont(ofSize: 26, weight: .semibold)
+            codeLabel.isSelectable = true
+            let copy = ClosureButton(L.t("Скопировать", "Copy")) { [weak self] in self?.copyCode(confirm: true) }
+            copyButton = copy
+            let row = UI.row([codeLabel, copy], spacing: 14)
+            row.alignment = .centerY
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
+            row.alphaValue = 0
+            codeRow = row
             form.section("GitHub")
             form.wide(button)
+            form.wide(row)
             form.wide(browserNote)
             form.section(L.t("Или имя и токен", "Or a username and a token"))
         }
@@ -239,6 +253,12 @@ final class LoginDialog: ToolWindow {
         form.wide(rememberBox)
         install(form.grid, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.submit() }, cancelButton])
         window?.initialFirstResponder = user.stringValue.isEmpty ? user : password
+        if Snapshot.active, codeRow != nil {
+            codeLabel.stringValue = "ABCD-1234"
+            codeRow?.alphaValue = 1
+            browserNote.stringValue = L.t("Введите этот код на открывшейся странице GitHub — он уже скопирован. Жду разрешения…",
+                                          "Enter this code on the GitHub page that has opened — it is already copied. Waiting for approval…")
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -256,11 +276,12 @@ final class LoginDialog: ToolWindow {
             switch result {
             case .failure(let error): fail(error)
             case .success(let device):
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(device.userCode, forType: .string)
+                self.codeLabel.stringValue = device.userCode
+                self.codeRow?.alphaValue = 1
+                self.copyCode()
                 self.browserNote.stringValue = L.t(
-                    "Введите на открывшейся странице GitHub код \(device.userCode) — он уже скопирован. Жду разрешения…",
-                    "Enter the code \(device.userCode) on the GitHub page that has opened — it is already copied. Waiting for approval…")
+                    "Введите этот код на открывшейся странице GitHub — он уже скопирован. Жду разрешения…",
+                    "Enter this code on the GitHub page that has opened — it is already copied. Waiting for approval…")
                 NSWorkspace.shared.open(device.verificationURL)
                 GitHubOAuth.waitForToken(device, alive: { [weak self] in self?.window?.isVisible == true }) { [weak self] result in
                     switch result {
@@ -279,6 +300,18 @@ final class LoginDialog: ToolWindow {
                     }
                 }
             }
+        }
+    }
+
+    private func copyCode(confirm: Bool = false) {
+        guard !codeLabel.stringValue.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(codeLabel.stringValue, forType: .string)
+        guard confirm else { return }
+        // Нажатие видно: надпись на кнопке на пару секунд меняется.
+        copyButton?.title = L.t("Скопировано", "Copied")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copyButton?.title = L.t("Скопировать", "Copy")
         }
     }
 
