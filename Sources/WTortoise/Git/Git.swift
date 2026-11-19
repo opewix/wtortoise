@@ -53,23 +53,42 @@ enum Git {
         var records: [String] { out.split(separator: "\0", omittingEmptySubsequences: false).map(String.init) }
     }
 
-    static func makeProcess(_ args: [String], in dir: String) -> Process {
+    static func makeProcess(_ args: [String], in dir: String, login: Login? = nil) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = prefix + args
+        var env = environment
+        var config = prefix
+        if let login {
+            // Сохранённые пароли не спрашиваем (пустое значение сбрасывает список помощников): они и привели
+            // к отказу. Имя и пароль отдаёт git наш askpass из окружения — в аргументах их не видно.
+            config += ["-c", "credential.helper=", "-c", "credential.username=" + login.user]
+            env["WTORTOISE_USERNAME"] = login.user
+            env["WTORTOISE_PASSWORD"] = login.password
+        }
+        process.arguments = config + args
         process.currentDirectoryURL = URL(fileURLWithPath: dir)
-        process.environment = environment
+        process.environment = env
         process.standardInput = FileHandle.nullDevice
         return process
     }
 
     /// Запустить и дождаться. Для коротких запросов; долгие команды идут через `GitTask`.
     @discardableResult
-    static func run(_ args: [String], in dir: String) -> Output {
+    static func run(_ args: [String], in dir: String, input: String? = nil) -> Output {
         let process = makeProcess(args, in: dir)
+        if let input {
+            let stdin = Pipe()
+            process.standardInput = stdin
+            stdin.fileHandleForWriting.write(Data(input.utf8))
+            stdin.fileHandleForWriting.closeFile()
+        }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        // Конца ждём семафором, а не `waitUntilExit`: тот крутит цикл событий, и посреди запроса срабатывало
+        // отложенное «закрыто последнее окно» — программа выходила, не успев показать следующее окно.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch {
             return Output(status: -1, out: "", err: error.localizedDescription)
         }
@@ -83,7 +102,7 @@ enum Git {
         }
         let outData = out.fileHandleForReading.readDataToEndOfFile()
         group.wait()
-        process.waitUntilExit()
+        exited.wait()
         return Output(status: process.terminationStatus, out: String(decoding: outData, as: UTF8.self),
                       err: String(decoding: errData, as: UTF8.self))
     }
@@ -154,8 +173,9 @@ enum Git {
 final class GitTask {
     private var process: Process?
 
-    func start(_ args: [String], in dir: String, onOutput: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) {
-        let process = Git.makeProcess(args, in: dir)
+    func start(_ args: [String], in dir: String, login: Login? = nil,
+               onOutput: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) {
+        let process = Git.makeProcess(args, in: dir, login: login)
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -186,6 +206,41 @@ final class GitTask {
 
     func cancel() {
         process?.terminate()
+    }
+}
+
+/// Имя и пароль для сервера, введённые человеком после отказа в доступе.
+struct Login {
+    let user: String
+    let password: String
+
+    /// Адрес сервера (`https://узел`), если вывод git говорит об отказе в доступе по HTTP; иначе nil.
+    /// Для ssh окно входа не поможет — там ключи, а не пароль.
+    static func deniedServer(in output: String) -> String? {
+        let lower = output.lowercased()
+        let signs = ["error: 403", "error: 401", "authentication failed", "could not read username",
+                     "could not read password", "repository not found", "permission to "]
+        guard signs.contains(where: lower.contains) else { return nil }
+        guard let range = output.range(of: #"https?://[^/'\s]+"#, options: .regularExpression) else { return nil }
+        var server = String(output[range])
+        // «https://имя@узел» — имя в адрес сервера не входит.
+        if let at = server.lastIndex(of: "@"), let slashes = server.range(of: "://") {
+            server = String(server[..<slashes.upperBound]) + String(server[server.index(after: at)...])
+        }
+        return server
+    }
+
+    /// Запомнить вход для этого хранилища: пароль — в связку ключей macOS, а в настройки хранилища —
+    /// имя и то, что пароль для этого сервера брать из связки, а не у помощников из общих настроек.
+    func remember(server: String, repo: String) {
+        guard let url = URL(string: server), let scheme = url.scheme, let host = url.host else { return }
+        let key = "credential.\(server)"
+        Git.run(["config", "--local", "--replace-all", key + ".helper", ""], in: repo)
+        Git.run(["config", "--local", "--add", key + ".helper", "osxkeychain"], in: repo)
+        Git.run(["config", "--local", key + ".username", user], in: repo)
+        let port = url.port.map { ":\($0)" } ?? ""
+        Git.run(["credential", "approve"], in: repo,
+                input: "protocol=\(scheme)\nhost=\(host)\(port)\nusername=\(user)\npassword=\(password)\n\n")
     }
 }
 

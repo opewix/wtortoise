@@ -37,7 +37,9 @@ No big repository browser to keep open — Finder is the browser.
 - **Rename** and **Delete** under version control (`git mv`, `git rm`).
 - **Push, Pull, Fetch, Clone** with live output from git, including transfer progress.
 - **Passwords and SSH passphrases** are asked in a window; credential helpers (the macOS keychain)
-  and the SSH agent work as in the terminal.
+  and the SSH agent work as in the terminal. If the server denies access (wrong saved account,
+  error 403), the progress window offers **Sign in...**: enter a username and a password or token,
+  and the command runs again; the login can be remembered for that repository.
 - The app runs the `git` you already have, so its behavior matches the command line.
 - English by default, with the wording of TortoiseGit; Russian can be turned on in Settings.
 

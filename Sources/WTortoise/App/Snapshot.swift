@@ -31,6 +31,7 @@ enum Snapshot {
         let blameStart = ToolWindow.live.count
         BlameController.open(repo: repo, path: "README.md")
         if ToolWindow.live.count > blameStart, let blame = ToolWindow.live.last { windows.append(("blame", blame)) }
+        add("login", LoginDialog(server: "https://github.com", repo: repo) { _, _ in })
         add("clone", CloneDialog(parent: (repo as NSString).deletingLastPathComponent))
         let before = ToolWindow.live.count
         if let change = Git.status(repo).first(where: { $0.kind == .modified }) {
