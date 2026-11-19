@@ -4,6 +4,12 @@ Git from the Finder right-click menu, in the spirit of TortoiseGit on Windows: p
 file, choose **Commit**, **Show log**, **Diff**, **Push**… and a small window does that one job.
 No big repository browser to keep open — Finder is the browser.
 
+> **Windows-style utilities for macOS** — one set, each works on its own:  
+> [WExplorer](https://github.com/opewix/wexplorer) — file manager  
+> [WTaskbar](https://github.com/opewix/wtaskbar) — taskbar and Start menu instead of the Dock  
+> [WPhoto](https://github.com/opewix/wphoto) — picture viewer  
+> **WTortoise** — Git in the right-click menu, like TortoiseGit
+
 ![The commit window](reference/commit.png)
 
 ![The log window](reference/log.png)
