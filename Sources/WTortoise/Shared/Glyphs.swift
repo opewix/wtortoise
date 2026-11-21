@@ -135,6 +135,7 @@ private func arrow(up: Bool, _ color: NSColor, x: CGFloat = 8, from: CGFloat = 3
 
 /// Значки команд. Рисуются кодом на сетке 16×16 (ось Y вверх); чужой графики в программе нет.
 enum Glyph: String {
+    case resolve, cleanup
     case sync, commit, pull, fetch, push, diff, log, status, add, revert, switchBranch, merge, branch, tag
     case stash, stashPop, clone, initRepo, settings, about, app, blame, rename, remove
 
@@ -155,6 +156,15 @@ enum Glyph: String {
             // Зелёная стрелка, заворачивающая вправо.
             curve((4, 2.2), (4, 8), (6, 10), (10.5, 10), leaf, 3.4)
             fill([(9.8, 14.6), (15.4, 10), (9.8, 5.4)], leaf)
+        case .resolve:
+            // Зелёная галочка: конфликт улажен.
+            stroke([(2.6, 8.4), (6.4, 4.2), (13.6, 12.6)], green, 2.6)
+        case .cleanup:
+            // Метла: коричневая ручка и жёлтая щётка.
+            stroke([(12.8, 14.2), (7.4, 7.6)], NSColor(hex: 0x8A5A2B), 1.8)
+            fill([(8.6, 8.8), (5.8, 6.2), (2, 4.6), (4.4, 1.6), (9.8, 5.4)], yellow)
+            stroke([(4.6, 5.6), (3, 3.4)], NSColor(hex: 0xB8860B), 0.8)
+            stroke([(6.2, 5), (4.8, 2.6)], NSColor(hex: 0xB8860B), 0.8)
         case .sync:
             // Зелёная стрелка вниз и красная вверх: получить и отправить.
             curve((5, 14.4), (5, 12), (5, 10), (5, 8), leaf, 3)

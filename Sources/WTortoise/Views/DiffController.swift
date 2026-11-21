@@ -145,19 +145,36 @@ final class DiffController: ToolWindow {
         } else {
             args = ["diff", "-U100000", "--cached", "--"] + file.pathspecs
         }
+        let base: ExternalDiff.Side = file.kind == .untracked || !Git.hasHead(repo) ? .empty : .revision("HEAD", file.oldPath ?? file.path)
         open(repo: repo, path: file.path, args: args,
-             left: L.t("Базовая версия", "Base"), right: L.t("Рабочая копия", "Working Tree"))
+             left: L.t("Базовая версия", "Base"), right: L.t("Рабочая копия", "Working Tree"), sides: (base, .working(file.path)))
     }
 
     /// Файл в фиксации против её первого родителя.
+    /// «Diff with previous version»: что последняя фиксация файла изменила в нём.
+    static func openPrevious(repo: String, path: String) {
+        let hashes = Git.run(["log", "-n", "2", "--format=%H", "--", path], in: repo).lines
+        guard let last = hashes.first else {
+            return UI.alert(L.t("У файла нет истории.", "The file has no history."), info: path, style: .informational)
+        }
+        let base = hashes.count > 1 ? hashes[1] : Git.emptyTree
+        open(repo: repo, path: path, args: ["diff", "-U100000", "-M", base, last, "--", path],
+             left: String(base.prefix(8)), right: String(last.prefix(8)), sides: (.revision(base, path), .revision(last, path)))
+    }
+
     static func openCommit(repo: String, commit: Commit, file: CommitFile) {
         let base = commit.parents.first ?? Git.emptyTree
         let paths = file.oldPath.map { [$0, file.path] } ?? [file.path]
         open(repo: repo, path: file.path, args: ["diff", "-U100000", "-M", base, commit.hash, "--"] + paths,
-             left: String(base.prefix(8)), right: String(commit.hash.prefix(8)))
+             left: String(base.prefix(8)), right: String(commit.hash.prefix(8)),
+             sides: (.revision(base, file.oldPath ?? file.path), .revision(commit.hash, file.path)))
     }
 
-    private static func open(repo: String, path: String, args: [String], left: String, right: String) {
+    private static func open(repo: String, path: String, args: [String], left: String, right: String,
+                             sides: (left: ExternalDiff.Side, right: ExternalDiff.Side)) {
+        // В настройках выбрана WMerge и она установлена — сравнение открывается в ней.
+        if ExternalDiff.isOn, ExternalDiff.open(repo: repo, left: sides.left, right: sides.right,
+                                                titles: ["\(path) : \(left)", "\(path) : \(right)"]) { return }
         let output = Git.run(args, in: repo)
         let parsed = DiffParser.parse(output.out)
         if parsed.binary {
@@ -216,5 +233,89 @@ final class DiffController: ToolWindow {
         let current = view.firstVisibleRow + Int(view.visibleRect.height / 3 / view.lineHeight)
         let target = direction > 0 ? blocks.first { $0 > current + 1 } : blocks.last { $0 < current - 1 }
         if let target { view.scroll(toRow: target) } else { NSSound.beep() }
+    }
+}
+
+/// Сравнение во внешней программе WMerge (github.com/opewix/wmerge) вместо своего окна.
+/// Включается в настройках и работает, только когда WMerge установлена.
+enum ExternalDiff {
+    /// Одна сторона сравнения.
+    enum Side {
+        /// Файл в заданной версии — выгружается во временный файл.
+        case revision(String, String)
+        /// Файл рабочей копии — открывается сам, его можно править прямо в WMerge.
+        case working(String)
+        /// Файла на этой стороне нет (добавлен или удалён).
+        case empty
+    }
+
+    private static let bundleID = "dev.oleg.wmerge"
+
+    static var isInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil }
+    static var isOn: Bool { Settings.useWMerge && isInstalled }
+
+    private static var folder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("wtortoise-diff") }
+
+    /// Открыть сравнение двух сторон в WMerge. false — не получилось, показываем своё окно.
+    /// - Parameter titles: названия панелей в WMerge вместо путей во временной папке.
+    static func open(repo: String, left: Side, right: Side, titles: [String]) -> Bool {
+        cleanUp()
+        let session = folder.appendingPathComponent(UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)) != nil,
+              let leftPath = materialize(left, repo: repo, in: session, tag: "left"),
+              let rightPath = materialize(right, repo: repo, in: session, tag: "right") else { return false }
+        var link = URLComponents()
+        link.scheme = "wmerge"
+        link.host = "compare"
+        // Файл рабочей копии показываем его настоящим путём: его правят и сохраняют.
+        func title(_ side: Side, _ text: String) -> String {
+            if case .working = side { return "" }
+            return text
+        }
+        link.queryItems = [URLQueryItem(name: "path", value: leftPath), URLQueryItem(name: "path", value: rightPath),
+                           URLQueryItem(name: "title", value: title(left, titles[0])),
+                           URLQueryItem(name: "title", value: title(right, titles[1]))]
+        guard let url = link.url, NSWorkspace.shared.open(url) else { return false }
+        // Своего окна нет — и держать программу открытой незачем: она живёт, пока есть окна.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if ToolWindow.live.isEmpty { NSApp.terminate(nil) }
+        }
+        return true
+    }
+
+    /// Путь к файлу стороны. Версии из истории и пустые стороны — во временной папке; имя файла сохраняем,
+    /// чтобы WMerge подсветила синтаксис по расширению.
+    private static func materialize(_ side: Side, repo: String, in session: URL, tag: String) -> String? {
+        func temp(_ name: String, _ label: String, _ data: Data) -> String? {
+            let dir = session.appendingPathComponent("\(tag)-\(label)")
+            guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else { return nil }
+            let file = dir.appendingPathComponent((name as NSString).lastPathComponent)
+            guard (try? data.write(to: file)) != nil else { return nil }
+            // Версия из истории — только для чтения: правка в ней никуда бы не попала.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+            return file.path
+        }
+        switch side {
+        case .working(let path):
+            let full = repo + "/" + path
+            return FileManager.default.fileExists(atPath: full) ? full : temp(path, "deleted", Data())
+        case .revision(let revision, let path):
+            let data = revision == Git.emptyTree ? nil : Git.fileData(repo, revision: revision, path: path)
+            return temp(path, data == nil ? "none" : String(revision.prefix(8)), data ?? Data())
+        case .empty:
+            return temp("empty", "none", Data())
+        }
+    }
+
+    /// Выгруженное больше суток назад уже никому не нужно.
+    private static func cleanUp() {
+        let limit = Date().addingTimeInterval(-86_400)
+        let old = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        for item in old {
+            if let created = try? item.resourceValues(forKeys: [.creationDateKey]).creationDate, created < limit {
+                // Файлы только для чтения лежат в обычных папках — папка удаляется целиком.
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
     }
 }

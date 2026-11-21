@@ -172,6 +172,9 @@ private final class WinDateBox: NSView {
 /// Журнал: граф фиксаций, под ним сообщение и файлы выбранной. Раскладка — как в окне Log Messages у TortoiseGit.
 final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
     private static let limit = 3000
+    /// Хеш-метка строки «Working tree changes»: несохранённые изменения показаны первой строкой журнала.
+    private static let workingTree = "WORKTREE"
+    private var working: [FileChange] = []
     private let repo: String
     private let specs: [String]
     private var all: [Commit] = []
@@ -214,7 +217,8 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
             ("graph", L.t("Граф", "Graph"), 90), ("sha", "SHA-1", 72), ("actions", L.t("Действия", "Actions"), 62),
             ("message", L.t("Сообщение", "Message"), 420), ("author", L.t("Автор", "Author"), 140), ("date", L.t("Дата", "Date"), 150),
         ], flex: 3)
-        commitTable.allowsMultipleSelection = false
+        // Две выделенные фиксации можно сравнить между собой.
+        commitTable.allowsMultipleSelection = true
         let (fileScroll, fileTable) = UI.table([
             ("path", L.t("Путь", "Path"), 420), ("ext", L.t("Расширение", "Extension"), 80), ("status", L.t("Состояние", "Status"), 90),
             ("added", L.t("Строк добавлено", "Lines added"), 100), ("removed", L.t("Строк убрано", "Lines removed"), 110),
@@ -328,11 +332,19 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         let id = loadID
         let selected = selectedCommit?.hash
         Git.background({
-            Git.log(repo, all: all, specs: specs, limit: LogController.limit, firstParent: firstParent, noMerges: noMerges)
-        }) { [weak self] commits in
+            (Git.log(repo, all: all, specs: specs, limit: LogController.limit, firstParent: firstParent, noMerges: noMerges),
+             Git.status(repo, specs: specs).filter { $0.kind != .untracked }, Git.run(["rev-parse", "HEAD"], in: repo).trimmed)
+        }) { [weak self] loaded, working, head in
             guard let self, id == self.loadID else { return }
+            var commits = loaded
+            self.working = working
+            // Есть несохранённые изменения — первой строкой идёт «Working tree changes», её родитель — HEAD.
+            if !working.isEmpty {
+                commits.insert(Commit(hash: LogController.workingTree, parents: head.isEmpty ? [] : [head], author: "", email: "",
+                                      date: Date(), refs: [], subject: L.t("Изменения рабочей копии", "Working tree changes")), at: 0)
+            }
             self.all = commits
-            if !self.datesTouched, let newest = commits.map(\.date).max(), let oldest = commits.map(\.date).min() {
+            if !self.datesTouched, let newest = loaded.map(\.date).max(), let oldest = loaded.map(\.date).min() {
                 self.fromBox.picker.dateValue = oldest
                 self.toBox.picker.dateValue = newest
             }
@@ -354,6 +366,7 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         let from = calendar.startOfDay(for: fromBox.picker.dateValue)
         let to = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: toBox.picker.dateValue)) ?? .distantFuture
         commits = all.filter { commit in
+            if commit.hash == LogController.workingTree { return query.isEmpty }
             guard !datesTouched || (commit.date >= from && commit.date < to) else { return false }
             return query.isEmpty || commit.subject.lowercased().contains(query) || commit.author.lowercased().contains(query)
                 || commit.email.lowercased().contains(query) || commit.hash.hasPrefix(query)
@@ -391,6 +404,17 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
             return
         }
         let repo = self.repo
+        if commit.hash == LogController.workingTree {
+            // Несохранённые изменения: внизу — изменённые файлы рабочей копии.
+            details.string = L.t("Изменения рабочей копии, ещё не зафиксированные.", "Uncommitted changes in the working tree.")
+            allFiles = working.map {
+                CommitFile(status: $0.kind == .added ? "A" : $0.kind == .deleted ? "D" : $0.kind == .renamed ? "R" : "M",
+                           path: $0.path, oldPath: $0.oldPath)
+            }
+            stats = Git.numstat(repo)
+            applyPathFilter()
+            return
+        }
         Git.background({
             (Git.run(["show", "-s", "--format=%B", commit.hash], in: repo).trimmed, Git.files(of: commit, in: repo),
              Git.numstat(of: commit, in: repo))
@@ -421,17 +445,18 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
 
     /// Строка состояния под списками — тем же текстом, что в оригинале.
     private func updateStatus() {
-        guard let first = commits.first, let last = commits.last else {
+        let real = commits.filter { $0.hash != LogController.workingTree }
+        guard let first = real.first, let last = real.last else {
             statusLabel.stringValue = L.t("Фиксаций нет", "Showing 0 revision(s)")
             return
         }
-        let selected = commitTable.selectedRow >= 0 ? 1 : 0
+        let selected = commitTable.selectedRowIndexes.count
         let added = files.reduce(0) { $0 + (stats[$1.path]?.added ?? 0) }
         let removed = files.reduce(0) { $0 + (stats[$1.path]?.removed ?? 0) }
         let fromHash = String(last.hash.prefix(7)), toHash = String(first.hash.prefix(7))
         statusLabel.stringValue = L.t(
-            "Показано фиксаций: \(commits.count), с \(fromHash) по \(toHash) — выбрано: \(selected), файлов: \(files.count); строк: \(added)(+) \(removed)(-)",
-            "Showing \(commits.count) revision(s), from revision \(fromHash) to revision \(toHash) - \(selected) revision(s) selected, \(files.count) file(s); line: \(added)(+) \(removed)(-)")
+            "Показано фиксаций: \(real.count), с \(fromHash) по \(toHash) — выбрано: \(selected), файлов: \(files.count); строк: \(added)(+) \(removed)(-)",
+            "Showing \(real.count) revision(s), from revision \(fromHash) to revision \(toHash) - \(selected) revision(s) selected, \(files.count) file(s); line: \(added)(+) \(removed)(-)")
     }
 
     // MARK: Переход между фиксациями
@@ -540,7 +565,7 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
             let cell = GraphCell()
             cell.row = row < graph.count ? graph[row] : nil
             return cell
-        case "sha": return UI.textCell(String(commit.hash.prefix(8)) + "...")
+        case "sha": return UI.textCell(commit.hash == LogController.workingTree ? "" : String(commit.hash.prefix(8)) + "...")
         case "actions":
             let cell = ActionsCell()
             cell.actions = commit.actions
@@ -552,7 +577,7 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
             cell.commit = commit
             return cell
         case "author": return UI.textCell(commit.author)
-        case "date": return UI.textCell(dateFormatter.string(from: commit.date))
+        case "date": return UI.textCell(commit.hash == LogController.workingTree ? "" : dateFormatter.string(from: commit.date))
         default: return nil
         }
     }
@@ -564,6 +589,10 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
     @objc private func openFileDiff() {
         let row = fileTable.clickedRow
         guard row >= 0, let commit = selectedCommit else { return }
+        if commit.hash == LogController.workingTree {
+            if let change = working.first(where: { $0.path == files[row].path }) { DiffController.openWorking(repo: repo, file: change) }
+            return
+        }
         DiffController.openCommit(repo: repo, commit: commit, file: files[row])
     }
 
@@ -575,7 +604,29 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         let row = commitTable.clickedRow
         guard row >= 0 else { return }
         let commit = commits[row], repo = self.repo
+        if commit.hash == LogController.workingTree {
+            // У строки рабочей копии — только то, что к ней применимо.
+            menu.addItem(ClosureMenuItem(Command.commit.title, glyph: .commit) { CommitController(repo: repo, specs: []).present() })
+            menu.addItem(ClosureMenuItem(Command.status.title, glyph: .status) { StatusController(repo: repo, specs: []).present() })
+            menu.addItem(ClosureMenuItem(L.t("Показать изменения единой правкой", "Show changes as unified diff"), glyph: .diff) {
+                PatchWindow(repo: repo, text: Git.run(["diff", "HEAD"], in: repo).out).present()
+            })
+            return
+        }
         let short = String(commit.hash.prefix(8))
+        let picked = commitTable.selectedRowIndexes.contains(row) ? commitTable.selectedRowIndexes.map { commits[$0] } : [commit]
+        if picked.count == 2, !picked.contains(where: { $0.hash == LogController.workingTree }) {
+            // Старшая фиксация — слева, младшая — справа, как в оригинале.
+            let newer = picked[0], older = picked[1]
+            menu.addItem(ClosureMenuItem(L.t("Сравнить версии", "Compare revisions"), glyph: .diff) {
+                PatchWindow(repo: repo, text: Git.run(["diff", "--stat", "-p", older.hash, newer.hash], in: repo).out).present()
+            })
+            menu.addItem(ClosureMenuItem(L.t("Скопировать SHA-1", "Copy SHA-1 to clipboard")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(picked.map(\.hash).joined(separator: "\n"), forType: .string)
+            })
+            return
+        }
         menu.addItem(ClosureMenuItem(L.t("Сравнить с рабочей копией", "Compare with working tree"), glyph: .diff) {
             PatchWindow(repo: repo, text: Git.run(["diff", commit.hash], in: repo).out).present()
         })
@@ -621,8 +672,12 @@ final class LogController: ToolWindow, NSTableViewDataSource, NSTableViewDelegat
         let row = fileTable.clickedRow
         guard row >= 0, row < files.count, let commit = selectedCommit else { return }
         let file = files[row], repo = self.repo
-        menu.addItem(ClosureMenuItem(L.t("Сравнить с базой", "Compare with base"), glyph: .diff) {
-            DiffController.openCommit(repo: repo, commit: commit, file: file)
+        menu.addItem(ClosureMenuItem(L.t("Сравнить с базой", "Compare with base"), glyph: .diff) { [weak self] in
+            if commit.hash == LogController.workingTree {
+                if let change = self?.working.first(where: { $0.path == file.path }) { DiffController.openWorking(repo: repo, file: change) }
+            } else {
+                DiffController.openCommit(repo: repo, commit: commit, file: file)
+            }
         })
         menu.addItem(ClosureMenuItem(Command.log.title, glyph: .log) {
             LogController(repo: repo, specs: [file.path]).present()

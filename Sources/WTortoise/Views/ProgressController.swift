@@ -6,7 +6,7 @@ final class ProgressController: ToolWindow {
     private var steps: [[String]]
     private let onFinish: ((Bool) -> Void)?
     private let text: NSTextView
-    private let bar = NSProgressIndicator()
+    private let bar = WinProgressBar()
     private var closeControl: ClosureButton!
     private var abortControl: ClosureButton!
     private var extraButtons: [ClosureButton] = []
@@ -46,10 +46,18 @@ final class ProgressController: ToolWindow {
         let (scroll, text) = UI.textView(editable: false, mono: true)
         self.text = text
         super.init(title: ToolWindow.title(dir, L.t("Ход выполнения команды Git", "Git Command Progress")), size: NSSize(width: 640, height: 380))
-        bar.style = .bar
-        bar.isIndeterminate = true
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        let content = UI.column([scroll, bar])
+        // Как в оригинале: сверху картинка «с сервера — в папку», под ней полоса хода, ниже вывод git.
+        let globe = NSImageView(image: Glyph.clone.image(40))
+        let folder = NSImageView(image: {
+            let image = NSWorkspace.shared.icon(forFile: dir)
+            image.size = NSSize(width: 40, height: 40)
+            return image
+        }())
+        let banner = UI.row([globe, UI.spacer(), folder, UI.spacer(), UI.spacer()])
+        banner.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        let content = UI.column([banner, bar, scroll], spacing: 9)
+        banner.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        for view in [banner, bar] as [NSView] { view.setContentHuggingPriority(.required, for: .vertical) }
         scroll.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         bar.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         closeControl = ClosureButton(L.t("Закрыть", "Close"), key: "\r") { [weak self] in self?.close() }
@@ -68,7 +76,6 @@ final class ProgressController: ToolWindow {
         signInButton = ClosureButton(L.t("Войти…", "Sign in...")) { [weak self] in self?.signIn() }
         signInButton.isHidden = true
         install(content, buttons: [closeControl, abortControl], leading: extraButtons + [signInButton])
-        bar.startAnimation(nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -100,8 +107,7 @@ final class ProgressController: ToolWindow {
     }
 
     private func finish(status: Int32) {
-        bar.stopAnimation(nil)
-        bar.isHidden = true
+        bar.state = status == 0 ? .done : .failed
         closeControl.isEnabled = true
         abortControl.isEnabled = false
         if status != 0 {

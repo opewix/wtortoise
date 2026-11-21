@@ -110,6 +110,19 @@ enum Dispatcher {
                 return UI.alert(L.t("Выберите файлы или папки внутри рабочей копии.", "Select files or folders inside the working tree."))
             }
             RemoveDialog(repo: repo, paths: specs).present()
+        case .diffPrevious:
+            guard !whole, specs.count == 1, !isDir.boolValue else {
+                return UI.alert(L.t("Сравнение с прежней версией — для одного файла.", "Diff with previous version works on a single file."))
+            }
+            DiffController.openPrevious(repo: repo, path: specs[0])
+        case .rebase: RebaseDialog(repo: repo).present()
+        case .export: ExportDialog(repo: repo).present()
+        case .refLog: RefLogController(repo: repo).present()
+        case .refBrowse: RefBrowserController(repo: repo).present()
+        case .resolve: ResolveController(repo: repo).present()
+        case .cleanup: CleanupDialog(repo: repo, specs: whole ? [] : specs).present()
+        case .reset: ResetDialog(repo: repo).present()
+        case .stashList: StashListController(repo: repo).present()
         case .sync: SyncDialog(repo: repo).present()
         case .push: PushDialog(repo: repo).present()
         case .pull: PullDialog(repo: repo).present()

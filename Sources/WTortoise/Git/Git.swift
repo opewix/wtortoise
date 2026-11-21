@@ -107,6 +107,20 @@ enum Git {
                       err: String(decoding: errData, as: UTF8.self))
     }
 
+    /// Содержимое файла в заданной версии, байт в байт; nil — такого файла в этой версии нет.
+    static func fileData(_ repo: String, revision: String, path: String) -> Data? {
+        let process = makeProcess(["show", "\(revision):\(path)"], in: repo)
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        guard (try? process.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        exited.wait()
+        return process.terminationStatus == 0 ? data : nil
+    }
+
     static func background<T>(_ work: @escaping () -> T, then: @escaping (T) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let value = work()
@@ -274,6 +288,12 @@ enum Settings {
         var all = defaults.dictionary(forKey: "recentMessages") as? [String: [String]] ?? [:]
         all[repo] = Array(([message] + (all[repo] ?? []).filter { $0 != message }).prefix(25))
         defaults.set(all, forKey: "recentMessages")
+    }
+
+    /// Сравнивать файлы в WMerge (если она установлена), а не в своём окне сравнения.
+    static var useWMerge: Bool {
+        get { defaults.bool(forKey: "useWMerge") }
+        set { defaults.set(newValue, forKey: "useWMerge") }
     }
 
     static var showUnversioned: Bool {

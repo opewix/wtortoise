@@ -485,3 +485,53 @@ final class WinSplitButton: NSView {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: self)
     }
 }
+
+/// Полоса хода Windows 10: серая рамка, зелёная заливка. Пока идёт работа — бегущий отрезок, в конце — целиком.
+final class WinProgressBar: NSView {
+    enum State { case running, done, failed }
+    var state: State = .running {
+        didSet {
+            if state != .running { timer?.invalidate() }
+            needsDisplay = true
+        }
+    }
+    private var phase: CGFloat = 0
+    private var timer: Timer?
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 22).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        timer?.invalidate()
+        guard window != nil, state == .running else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.phase = (self.phase + 0.012).truncatingRemainder(dividingBy: 1.3)
+            self.needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Win.box(bounds, fill: NSColor(hex: 0xE6E6E6), border: NSColor(hex: 0xBCBCBC))
+        let inner = bounds.insetBy(dx: 1, dy: 1)
+        switch state {
+        case .done:
+            NSColor(hex: 0x06B025).setFill()
+            inner.fill()
+        case .failed:
+            NSColor(hex: 0xDA2626).setFill()
+            inner.fill()
+        case .running:
+            let width = inner.width * 0.3
+            let x = inner.minX + (phase - 0.3) * inner.width
+            NSColor(hex: 0x06B025).setFill()
+            NSRect(x: x, y: inner.minY, width: width, height: inner.height).intersection(inner).fill()
+        }
+    }
+}

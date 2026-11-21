@@ -20,7 +20,7 @@ No big repository browser to keep open — Finder is the browser.
 
 - **Finder menu**, laid out like on Windows. Inside a working tree: *Git Sync…*,
   *Git Commit -> "branch"…* and a **WTortoise** group with Pull, Fetch, Push, Diff, Show log, Check for
-  modifications, Stash, Rename, Delete, Revert, Switch/Checkout, Merge, Create Branch, Create Tag,
+  modifications, Stash, Stash List, Reflog, Browse References, Resolve, Rename, Delete, Revert, Clean up, Reset, Switch/Checkout, Merge, Create Branch, Create Tag,
   Add and Blame, in TortoiseGit's order. Outside one: *Git Clone…* and *Git Create repository here…*.
 - **The same menu and status badges in [WExplorer](https://github.com/opewix/wexplorer)**, the
   Windows-style file manager: it shows them on its own once WTortoise is installed.
@@ -40,6 +40,8 @@ No big repository browser to keep open — Finder is the browser.
   and the SSH agent work as in the terminal. If the server denies access (wrong saved account,
   error 403), the progress window offers **Sign in...**: enter a username and a password or token,
   and the command runs again; the login can be remembered for that repository.
+- **Diffs in [WMerge](https://github.com/opewix/wmerge)**, if you have it: turn on *Use WMerge to compare files* in
+  Settings and file comparisons open there instead of the built-in diff window.
 - The app runs the `git` you already have, so its behavior matches the command line.
 - English by default, with the wording of TortoiseGit; Russian can be turned on in Settings.
 

@@ -121,8 +121,9 @@ class FormDialog: ToolWindow {
     private func submit() {
         guard let steps = steps() else { return }
         let dir = workDir
-        close()
+        // Сначала окно хода, потом закрываем это: программа выходит, когда окон не осталось.
         ProgressController.run(title: name, dir: dir, steps: steps)
+        close()
     }
 
     func required(_ value: String, _ what: String) -> String? {
@@ -449,14 +450,16 @@ final class MergeDialog: FormDialog {
 }
 
 final class ResetDialog: FormDialog {
-    private let commit: Commit
+    private var chooser: RefChooser!
     private var modes: [NSButton] = []
 
-    init(repo: String, commit: Commit) {
-        self.commit = commit
+    /// - Parameter commit: версия из журнала; без неё версию выбирают в окне.
+    init(repo: String, commit: Commit? = nil) {
         super.init(repo: repo, name: L.t("Сброс", "Reset"))
-        form.wide(UI.label(L.t("Сбросить «\(Git.headName(repo))» на:", "Current branch: \(Git.headName(repo))")))
-        form.wide(UI.label("\(commit.hash.prefix(8))  \(commit.subject)", bold: true))
+        chooser = RefChooser(repo: repo, allowHead: true, preset: commit?.hash)
+        form.wide(UI.label(L.t("Текущая ветка: \(Git.headName(repo))", "Current Branch: \(Git.headName(repo))")))
+        form.section(L.t("Сбросить на", "Reset To This"))
+        form.wide(chooser.view)
         form.section(L.t("Вид сброса", "Reset Type"))
         let titles = [
             L.t("Мягкий: рабочая копия и индекс остаются", "Soft: Leave working tree and index untouched"),
@@ -478,12 +481,68 @@ final class ResetDialog: FormDialog {
     @objc private func pick() {}
 
     override func steps() -> [[String]]? {
+        guard let ref = chooser.ref else {
+            UI.alert(L.t("Не выбрана версия.", "No version is selected."))
+            return nil
+        }
         let index = modes.firstIndex { $0.state == .on } ?? 1
         if index == 2, !UI.confirm(L.t("Жёсткий сброс: несохранённые изменения пропадут.", "Hard reset: uncommitted changes will be lost."),
                                    info: L.t("Отменить это нельзя.", "This cannot be undone."), ok: L.t("Сбросить", "Reset")) {
             return nil
         }
-        return [["reset", ["--soft", "--mixed", "--hard"][index], commit.hash]]
+        return [["reset", ["--soft", "--mixed", "--hard"][index], ref]]
+    }
+}
+
+/// «Clean up»: удалить из рабочей копии файлы, которых нет под версией.
+final class CleanupDialog: FormDialog {
+    private let specs: [String]
+    private var kinds: [NSButton] = []
+    private let directories = UI.check(L.t("Удалять и папки не под версией", "Remove untracked directories"), on: true)
+    private let dryRun = UI.check(L.t("Пробный прогон: только показать", "Dry run"), on: true)
+
+    init(repo: String, specs: [String]) {
+        self.specs = specs
+        super.init(repo: repo, name: L.t("Очистка", "Clean"))
+        form.section(L.t("Что удалять", "Clean Type"))
+        let titles = [
+            L.t("Все файлы не под версией", "Clean all untracked files"),
+            L.t("Не под версией, кроме игнорируемых", "Clean only non-ignore untracked files"),
+            L.t("Только игнорируемые", "Clean only ignored files"),
+        ]
+        form.wide(UI.column(titles.map { title in
+            let radio = WinRadio(title, target: self, action: #selector(pick))
+            kinds.append(radio)
+            return radio
+        }, spacing: 6))
+        kinds[1].state = .on
+        form.section(L.t("Параметры", "Options"))
+        form.wide(directories)
+        form.wide(dryRun)
+        finish()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func pick() {}
+
+    override func steps() -> [[String]]? {
+        let kind = kinds.firstIndex { $0.state == .on } ?? 1
+        var args = ["clean"]
+        if dryRun.state == .on {
+            args.append("-n")
+        } else {
+            // Файлы удаляются мимо Корзины — спрашиваем.
+            guard UI.confirm(L.t("Удалить файлы не под версией?", "Delete the untracked files?"),
+                             info: L.t("Они удаляются сразу, мимо Корзины. Отменить это нельзя.",
+                                       "They are deleted at once, not moved to the Trash. This cannot be undone."),
+                             ok: L.t("Удалить", "Delete")) else { return nil }
+            args.append("-f")
+        }
+        if directories.state == .on { args.append("-d") }
+        if kind == 0 { args.append("-x") }
+        if kind == 2 { args.append("-X") }
+        return [args + ["--"] + specs]
     }
 }
 
@@ -859,5 +918,274 @@ final class SyncDialog: ToolWindow, NSTableViewDataSource, NSTableViewDelegate {
         case "date": return UI.textCell(dateFormatter.string(from: commit.date))
         default: return nil
         }
+    }
+}
+
+/// «Stash List»: спрятанные изменения — посмотреть, достать, применить, удалить.
+final class StashListController: ToolWindow, NSTableViewDataSource, NSTableViewDelegate {
+    private let repo: String
+    private var table: NSTableView!
+    private var entries: [(ref: String, date: String, message: String)] = []
+
+    init(repo: String) {
+        self.repo = repo
+        super.init(title: ToolWindow.title(repo, L.t("Спрятанное", "Stash List")), size: NSSize(width: 640, height: 320))
+        let (scroll, table) = UI.table([
+            ("ref", L.t("Запись", "Reference"), 90), ("date", L.t("Дата", "Date"), 140), ("message", L.t("Сообщение", "Message"), 360),
+        ], flex: 2)
+        self.table = table
+        table.allowsMultipleSelection = false
+        table.dataSource = self
+        table.delegate = self
+        func act(_ title: String, _ args: [String], confirm: String? = nil) -> ClosureButton {
+            ClosureButton(title) { [weak self] in
+                guard let self, self.table.selectedRow >= 0 else { return NSSound.beep() }
+                let ref = self.entries[self.table.selectedRow].ref
+                if let confirm, !UI.confirm(confirm, info: ref, ok: title) { return }
+                ProgressController.run(title: title, dir: self.repo, steps: [args + [ref]])
+            }
+        }
+        install(scroll, buttons: [closeButton], leading: [
+            act(L.t("Показать", "Show"), ["stash", "show", "-p"]),
+            act(L.t("Применить", "Stash Apply"), ["stash", "apply"]),
+            act(L.t("Достать", "Stash Pop"), ["stash", "pop"]),
+            act(L.t("Удалить", "Delete"), ["stash", "drop"], confirm: L.t("Удалить спрятанное?", "Delete this stash?")),
+        ])
+        watch(repo) { [weak self] in self?.reload() }
+        reload()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    private func reload() {
+        entries = Git.run(["stash", "list", "--format=%gd%x1f%ci%x1f%gs"], in: repo).lines.compactMap { line in
+            let parts = line.components(separatedBy: "\u{1f}")
+            guard parts.count == 3 else { return nil }
+            return (parts[0], String(parts[1].prefix(19)), parts[2])
+        }
+        table.reloadData()
+        if !entries.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let entry = entries[row]
+        switch tableColumn?.identifier.rawValue {
+        case "ref": return UI.textCell(entry.ref)
+        case "date": return UI.textCell(entry.date)
+        default: return UI.textCell(entry.message)
+        }
+    }
+}
+
+/// «Resolve»: конфликтные файлы и способы их уладить.
+final class ResolveController: ToolWindow, NSTableViewDataSource, NSTableViewDelegate {
+    private let repo: String
+    private var table: NSTableView!
+    private var files: [FileChange] = []
+
+    init(repo: String) {
+        self.repo = repo
+        super.init(title: ToolWindow.title(repo, L.t("Конфликты", "Resolve")), size: NSSize(width: 640, height: 340))
+        let (scroll, table) = UI.table([("path", L.t("Путь", "Path"), 460), ("status", L.t("Состояние", "Status"), 120)])
+        self.table = table
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.doubleAction = #selector(openFile)
+        func act(_ title: String, _ steps: @escaping ([String]) -> [[String]]) -> ClosureButton {
+            ClosureButton(title) { [weak self] in
+                guard let self else { return }
+                let paths = self.table.selectedRowIndexes.map { self.files[$0].path }
+                guard !paths.isEmpty else { return NSSound.beep() }
+                ProgressController.run(title: title, dir: self.repo, steps: steps(paths))
+            }
+        }
+        let hint = UI.label(L.t("Двойной щелчок открывает файл в редакторе. Уладив, отметьте его «Resolved».",
+                                "Double-click opens the file in your editor. When done, mark it Resolved."), color: .secondaryLabelColor)
+        let content = UI.column([scroll, hint])
+        scroll.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        install(content, buttons: [closeButton], leading: [
+            act(L.t("Улажен", "Resolved")) { [["add", "--"] + $0] },
+            act(L.t("Взять свой", "Resolve conflict using 'mine'")) { [["checkout", "--ours", "--"] + $0, ["add", "--"] + $0] },
+            act(L.t("Взять чужой", "Resolve conflict using 'theirs'")) { [["checkout", "--theirs", "--"] + $0, ["add", "--"] + $0] },
+            ClosureButton(L.t("Прервать слияние", "Abort Merge")) { [repo] in
+                guard Git.isMerging(repo) else {
+                    return UI.alert(L.t("Слияние сейчас не идёт.", "No merge is in progress."), style: .informational)
+                }
+                guard UI.confirm(L.t("Прервать слияние?", "Abort the merge?"),
+                                 info: L.t("Рабочая копия вернётся к состоянию до слияния.", "The working tree goes back to the state before the merge."),
+                                 ok: L.t("Прервать", "Abort Merge")) else { return }
+                ProgressController.run(title: "Abort Merge", dir: repo, steps: [["merge", "--abort"]])
+            },
+        ])
+        watch(repo) { [weak self] in self?.reload() }
+        reload()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    private func reload() {
+        files = Git.status(repo).filter { $0.kind == .conflicted }
+        table.reloadData()
+    }
+
+    @objc private func openFile() {
+        let row = table.clickedRow
+        guard row >= 0 else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: repo + "/" + files[row].path))
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { files.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let file = files[row]
+        return UI.textCell(tableColumn?.identifier.rawValue == "path" ? file.path : file.statusText, color: file.color)
+    }
+}
+
+/// «Ignore»: как и куда записать правило игнорирования.
+final class IgnoreDialog: FormDialog {
+    private let paths: [String]
+    private let byExtension: Bool
+    private var types: [NSButton] = []
+    private var targets: [NSButton] = []
+
+    init(repo: String, paths: [String], byExtension: Bool) {
+        self.paths = paths
+        self.byExtension = byExtension
+        super.init(repo: repo, name: L.t("Игнорировать", "Ignore"))
+        func radios(_ titles: [String], into list: inout [NSButton], action: Selector) -> NSView {
+            UI.column(titles.map { title in
+                let radio = WinRadio(title, target: self, action: action)
+                list.append(radio)
+                return radio
+            }, spacing: 6)
+        }
+        form.section(L.t("Как", "Ignore Type"))
+        form.wide(radios([
+            L.t("Только в папке, где лежит", "Ignore item(s) only in containing folder(s)"),
+            L.t("Во всех папках", "Ignore item(s) recursively"),
+        ], into: &types, action: #selector(pickType)))
+        form.section(L.t("Куда записать", "Ignore File"))
+        form.wide(radios([
+            L.t(".gitignore в корне хранилища", ".gitignore in the repository root"),
+            L.t(".gitignore в папке, где лежит", ".gitignore in the containing directories of the items"),
+            L.t(".git/info/exclude (только у вас)", ".git/info/exclude"),
+        ], into: &targets, action: #selector(pickTarget)))
+        types[0].state = .on
+        targets[0].state = .on
+        finish()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func pickType() {}
+    @objc private func pickTarget() {}
+
+    /// Правила пишем сами, без git: это правка текстового файла.
+    override func steps() -> [[String]]? {
+        let recursive = types[1].state == .on
+        let target = targets.firstIndex { $0.state == .on } ?? 0
+        var additions: [String: [String]] = [:]
+        for path in paths {
+            let folder = (path as NSString).deletingLastPathComponent
+            let name = byExtension ? "*." + (path as NSString).pathExtension : (path as NSString).lastPathComponent
+            guard name != "*." else { continue }
+            let file: String, rule: String
+            if target == 1 {
+                // В .gitignore самой папки правило пишется относительно неё.
+                file = repo + (folder.isEmpty ? "" : "/" + folder) + "/.gitignore"
+                rule = recursive ? name : "/" + name
+            } else {
+                file = repo + (target == 0 ? "/.gitignore" : "/.git/info/exclude")
+                rule = recursive ? name : "/" + (folder.isEmpty ? "" : folder + "/") + name
+            }
+            if !(additions[file] ?? []).contains(rule) { additions[file, default: []].append(rule) }
+        }
+        for (file, rules) in additions {
+            var text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+            let existing = Set(text.components(separatedBy: "\n"))
+            let fresh = rules.filter { !existing.contains($0) }
+            guard !fresh.isEmpty else { continue }
+            if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
+            text += fresh.joined(separator: "\n") + "\n"
+            do {
+                try text.write(toFile: file, atomically: true, encoding: .utf8)
+            } catch {
+                UI.alert(error.localizedDescription)
+                return nil
+            }
+        }
+        NotificationCenter.default.post(name: Git.changed, object: repo)
+        close()
+        return nil
+    }
+}
+
+/// «Rebase»: перенести фиксации текущей ветки поверх другой версии.
+final class RebaseDialog: FormDialog {
+    private var chooser: RefChooser!
+    private let force = UI.check(L.t("Переносить, даже если ветка уже поверх", "Force Rebase"))
+    private let autostash = UI.check(L.t("Спрятать и вернуть несохранённые изменения", "Autostash"))
+
+    init(repo: String) {
+        super.init(repo: repo, name: L.t("Перенос", "Rebase"))
+        chooser = RefChooser(repo: repo, allowHead: false)
+        form.wide(UI.label(L.t("Ветка: \(Git.headName(repo))", "Branch: \(Git.headName(repo))")))
+        form.section(L.t("Поверх чего", "UpStream"))
+        form.wide(chooser.view)
+        form.section(L.t("Параметры", "Options"))
+        form.wide(force)
+        form.wide(autostash)
+        finish(ok: L.t("Начать перенос", "Start Rebase"))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func steps() -> [[String]]? {
+        guard let ref = chooser.ref else {
+            UI.alert(L.t("Не выбрана версия.", "No version is selected."))
+            return nil
+        }
+        var args = ["rebase"]
+        if force.state == .on { args.append("--force-rebase") }
+        if autostash.state == .on { args.append("--autostash") }
+        return [args + [ref]]
+    }
+}
+
+/// «Export»: содержимое выбранной версии одним zip-файлом, без истории.
+final class ExportDialog: FormDialog {
+    private var chooser: RefChooser!
+    private let file: NSTextField
+
+    init(repo: String) {
+        file = UI.field((repo as NSString).deletingLastPathComponent + "/" + (repo as NSString).lastPathComponent + ".zip", width: 360)
+        super.init(repo: repo, name: L.t("Экспорт", "Export"))
+        chooser = RefChooser(repo: repo, allowHead: true)
+        let browse = ClosureButton("...") { [weak self] in self?.browse() }
+        browse.constraints.forEach { $0.isActive = false }
+        browse.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        form.section(L.t("Куда", "Export To"))
+        form.row(L.t("Файл zip:", "Zip File:"), UI.row([file, browse]))
+        form.section(L.t("Какую версию", "Base On"))
+        form.wide(chooser.view)
+        finish()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    private func browse() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = (file.stringValue as NSString).lastPathComponent
+        panel.directoryURL = URL(fileURLWithPath: (file.stringValue as NSString).deletingLastPathComponent)
+        if panel.runModal() == .OK, let url = panel.url { file.stringValue = url.path }
+    }
+
+    override func steps() -> [[String]]? {
+        guard let target = required(file.stringValue, L.t("файл zip", "zip file")), let ref = chooser.ref else { return nil }
+        return [["archive", "--format=zip", "-o", (target as NSString).expandingTildeInPath, ref]]
     }
 }

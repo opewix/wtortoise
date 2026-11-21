@@ -4,7 +4,10 @@ import Foundation
 /// и зовёт приложение ссылкой `wtortoise://<команда>?path=…`.
 enum Command: String, CaseIterable {
     case sync, commit, pull, fetch, push
-    case diff, log, status, blame
+    case diff, diffPrevious = "diffprev", log, status, blame
+    case resolve, cleanup, reset, stashList = "stashlist"
+    case refLog = "reflog", refBrowse = "refbrowse"
+    case rebase, export
     case add, revert, rename, remove = "delete"
     case switchBranch = "switch", merge, branch, tag
     case stashSave = "stash", stashPop = "stashpop"
@@ -21,6 +24,15 @@ enum Command: String, CaseIterable {
         case .fetch: return L.t("Извлечь (Fetch)…", "Fetch...")
         case .push: return L.t("Отправить (Push)…", "Push...")
         case .diff: return L.t("Сравнить", "Diff")
+        case .diffPrevious: return L.t("Сравнить с прежней версией", "Diff with previous version")
+        case .rebase: return L.t("Перенести (Rebase)…", "Rebase...")
+        case .export: return L.t("Экспорт…", "Export...")
+        case .refLog: return L.t("Показать журнал ссылок", "Show Reflog")
+        case .refBrowse: return L.t("Обзор веток и меток", "Browse References")
+        case .resolve: return L.t("Уладить конфликты…", "Resolve...")
+        case .cleanup: return L.t("Очистить…", "Clean up...")
+        case .reset: return L.t("Сбросить…", "Reset...")
+        case .stashList: return L.t("Список спрятанного", "Stash List")
         case .log: return L.t("Показать журнал", "Show log")
         case .status: return L.t("Проверить изменения", "Check for modifications")
         case .add: return L.t("Добавить…", "Add...")
@@ -48,7 +60,15 @@ enum Command: String, CaseIterable {
         case .pull: return .pull
         case .fetch: return .fetch
         case .push: return .push
-        case .diff: return .diff
+        case .diff, .diffPrevious: return .diff
+        case .rebase: return .merge
+        case .export: return .clone
+        case .refLog: return .log
+        case .refBrowse: return .branch
+        case .resolve: return .resolve
+        case .cleanup: return .cleanup
+        case .reset: return .revert
+        case .stashList: return .stash
         case .log: return .log
         case .status: return .status
         case .add: return .add
@@ -72,8 +92,9 @@ enum Command: String, CaseIterable {
     /// Группа «WTortoise» контекстного меню; «Git Sync…» и «Git Commit…» стоят над ней отдельными пунктами.
     static let submenuGroups: [[Command]] = [
         // Порядок и разделители — как в подменю TortoiseGit (таблица MenuInfo.cpp его расширения оболочки).
-        [.pull, .fetch, .push], [.diff], [.log, .status, .stashSave, .stashPop], [.rename, .remove, .revert],
-        [.switchBranch, .merge, .branch, .tag], [.add, .blame], [.clone], [.settings, .about],
+        [.pull, .fetch, .push], [.diff, .diffPrevious], [.log, .refLog, .refBrowse, .status, .rebase, .stashSave, .stashPop, .stashList],
+        [.resolve, .rename, .remove, .revert, .cleanup, .reset],
+        [.switchBranch, .merge, .branch, .tag, .export], [.add, .blame], [.clone], [.settings, .about],
     ]
 
     /// Название пункта, стоящего прямо в контекстном меню, а не в группе: с «Git» впереди, как в оригинале.

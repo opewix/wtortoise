@@ -109,6 +109,7 @@ final class SettingsController: ToolWindow {
     private let name = UI.field(Git.config("user.name"), width: 320)
     private let email = UI.field(Git.config("user.email"), width: 320)
     private let language = UI.popup(["English", "Русский"], selected: L.isRussian ? "Русский" : "English")
+    private let useWMerge = UI.check(L.t("Сравнивать файлы в WMerge", "Use WMerge to compare files"), on: Settings.useWMerge)
 
     static func show() {
         if let existing = ToolWindow.live.first(where: { $0 is SettingsController }) { return existing.showWindow(nil) }
@@ -123,6 +124,16 @@ final class SettingsController: ToolWindow {
         form.section(L.t("Автор фиксаций (общая настройка git)", "Commit author (global git config)"))
         form.row(L.t("Имя:", "Name:"), name)
         form.row("Email:", email)
+        form.section(L.t("Сравнение", "Diff Viewer"))
+        form.wide(useWMerge)
+        // Без установленной WMerge включать нечего: флажок серый, рядом — где её взять.
+        if !ExternalDiff.isInstalled {
+            useWMerge.isEnabled = false
+            useWMerge.state = .off
+            form.wide(UI.label(L.t("WMerge не установлена: github.com/opewix/wmerge. Пока сравнение идёт в окне WTortoise.",
+                                   "WMerge is not installed: github.com/opewix/wmerge. Until then WTortoise's own diff window is used."),
+                               color: .secondaryLabelColor))
+        }
         form.section(L.t("Язык", "Language"))
         form.row(L.t("Язык окон и меню:", "Language:"), language)
         form.wide(UI.label(L.t("Смена языка действует после перезапуска программы.", "A language change takes effect after the app is restarted."), color: .secondaryLabelColor))
@@ -137,6 +148,8 @@ final class SettingsController: ToolWindow {
             return UI.alert(L.t("По этому пути нет исполняемого файла git.", "There is no git executable at this path."), info: custom)
         }
         Settings.gitPath = custom
+        // Недоступный флажок настройку не трогает: WMerge могут поставить позже.
+        if useWMerge.isEnabled { Settings.useWMerge = useWMerge.state == .on }
         UserDefaults.standard.set(language.indexOfSelectedItem == 1 ? "ru" : "en", forKey: L.languageKey)
         for (key, field, old) in [("user.name", name, Git.config("user.name")), ("user.email", email, Git.config("user.email"))] {
             let value = field.stringValue.trimmingCharacters(in: .whitespaces)

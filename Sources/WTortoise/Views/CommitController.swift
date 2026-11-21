@@ -382,36 +382,100 @@ final class CommitController: ToolWindow, NSTextViewDelegate {
     }
 }
 
-/// «Проверить изменения»: что изменено в рабочей копии.
+/// «Проверить изменения»: что изменено в рабочей копии. Раскладка — как у окна Working Tree в TortoiseGit.
 final class StatusController: ToolWindow {
     private let repo: String
     private let specs: [String]
     private let list: FileListView
-    private let summary = UI.label("", color: .secondaryLabelColor)
+    private let summary = UI.label("")
+    private let showUnversioned = UI.check(L.t("Показывать файлы не под версией", "Show unversioned files"), on: true)
+    private let showFlagged = UI.check(L.t("Показывать файлы с флагом «не следить»", "Show ignore local changes flagged files"))
+    private let showIgnored = UI.check(L.t("Показывать игнорируемые", "Show ignored files"))
+    private let showStaged = UI.check(L.t("Показывать всё из индекса", "Show all staged files"), on: true)
+    private let wholeProject = UI.check(L.t("Показать весь проект", "Show Whole Project"))
+    private var all: [FileChange] = []
 
     init(repo: String, specs: [String]) {
         self.repo = repo
         self.specs = specs
-        list = FileListView(repo: repo, checkable: false)
-        super.init(title: ToolWindow.title(repo, L.t("Рабочая копия", "Working Tree")), size: NSSize(width: 760, height: 460))
-        install(list, buttons: [
-            ClosureButton(L.t("Фиксация…", "Commit")) { [repo, specs] in CommitController(repo: repo, specs: specs).present() },
-            ClosureButton(L.t("Обновить", "Refresh")) { [weak self] in self?.reload() },
-            okButton,
-        ], leading: [summary])
+        list = FileListView(repo: repo, checkable: false, lastModified: true)
+        list.commitFromMenu = true
+        super.init(title: ToolWindow.title(repo, L.t("Рабочая копия", "Working Tree")), size: NSSize(width: 900, height: 480))
+
+        // Флажки, которых программа не поддерживает, стоят на месте, но недоступны.
+        for box in [showFlagged, showIgnored, showStaged] { box.isEnabled = false }
+        wholeProject.state = specs.isEmpty ? .on : .off
+        wholeProject.isEnabled = !specs.isEmpty
+        for box in [showUnversioned, wholeProject] {
+            box.target = self
+            box.action = #selector(reload)
+        }
+        summary.lineBreakMode = .byWordWrapping
+        summary.maximumNumberOfLines = 2
+        summary.preferredMaxLayoutWidth = 380
+        let checks = UI.column([showUnversioned, showFlagged, showIgnored, showStaged, wholeProject], spacing: 3)
+        let under = UI.row([checks, UI.spacer(), summary])
+        under.alignment = .top
+        let content = UI.column([list, under], spacing: 6)
+        list.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        under.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        under.setHuggingPriority(.required, for: .vertical)
+        checks.setHuggingPriority(.required, for: .vertical)
+        // Столбец флажков не сжимается: уступает список.
+        checks.setClippingResistancePriority(.required, for: .vertical)
+        under.setClippingResistancePriority(.required, for: .vertical)
+        for box in checks.arrangedSubviews { box.setContentCompressionResistancePriority(.required, for: .vertical) }
+
+        let save = ClosureButton(L.t("Сохранить единой правкой", "Save unified diff")) { [weak self] in self?.saveDiff() }
+        let stash = WinSplitButton([
+            (L.t("Спрятать", "Stash"), { [repo] in StashDialog(repo: repo).present() }),
+            (Command.stashPop.title, { [repo] in
+                ProgressController.run(title: Command.stashPop.title, dir: repo, steps: [["stash", "pop"]])
+            }),
+        ])
+        let commit = ClosureButton(L.t("Фиксация", "Commit")) { [weak self] in
+            guard let self else { return }
+            CommitController(repo: self.repo, specs: self.wholeProject.state == .on ? [] : self.specs).present()
+        }
+        let refresh = ClosureButton(L.t("Обновить", "Refresh")) { [weak self] in self?.reload() }
+        save.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        for button in [commit, refresh] { button.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true }
+        install(content, buttons: [save, stash, commit, refresh, okButton])
         watch(repo) { [weak self] in self?.reload() }
         reload()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    private func reload() {
-        let files = Git.status(repo, specs: specs)
-        list.show(files, stats: Git.numstat(repo)) { _ in false }
-        let branch = Git.headName(repo)
-        summary.stringValue = files.isEmpty
-            ? L.t("\(branch): изменений нет", "\(branch): no changes")
-            : L.t("\(branch): изменённых файлов — \(files.count)", "\(branch): \(files.count) changed file(s)")
+    @objc private func reload() {
+        all = Git.status(repo, specs: wholeProject.state == .on ? [] : specs)
+        let stats = Git.numstat(repo)
+        let shown = showUnversioned.state == .on ? all : all.filter { $0.kind != .untracked }
+        list.show(shown, stats: stats) { _ in false }
+        func count(_ kind: FileChange.Kind) -> Int { all.filter { $0.kind == kind }.count }
+        let added = shown.reduce(0) { $0 + (stats[$1.path]?.added ?? 0) }
+        let removed = shown.reduce(0) { $0 + (stats[$1.path]?.removed ?? 0) }
+        // Тот же текст, что в оригинале справа под списком.
+        summary.stringValue = L.t(
+            "строк: \(added)(+) \(removed)(-) файлов: не под версией=\(count(.untracked)), изменено=\(count(.modified) + count(.renamed)), добавлено=\(count(.added)), удалено=\(count(.deleted)), конфликтов=\(count(.conflicted))",
+            "line: \(added)(+) \(removed)(-) files: non-versioned=\(count(.untracked)), modified=\(count(.modified) + count(.renamed)), added=\(count(.added)), deleted=\(count(.deleted)), conflicted=\(count(.conflicted))")
+    }
+
+    /// «Save unified diff»: все изменения под версией одной правкой в файл.
+    private func saveDiff() {
+        let diff = Git.run(["diff", "HEAD", "--"] + (wholeProject.state == .on ? [] : specs), in: repo).out
+        guard !diff.isEmpty else {
+            return UI.alert(L.t("Изменений под версией нет.", "There are no versioned changes."), style: .informational)
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "changes.patch"
+        panel.directoryURL = URL(fileURLWithPath: repo)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try diff.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            UI.alert(error.localizedDescription)
+        }
     }
 }
 
@@ -428,18 +492,16 @@ final class FilePickController: ToolWindow {
         self.repo = repo
         self.specs = specs
         self.mode = mode
-        list = FileListView(repo: repo, checkable: true)
+        // Как в оригинале: список без столбцов строк, под ним «Select/deselect all», ряд OK / Cancel / Help.
+        list = FileListView(repo: repo, checkable: true, lines: false)
         let name = mode == .add ? L.t("Добавить", "Add") : L.t("Убрать изменения", "Revert")
-        super.init(title: ToolWindow.title(repo, name), size: NSSize(width: 720, height: 420))
+        super.init(title: ToolWindow.title(repo, name), size: NSSize(width: 560, height: 420))
         let all = UI.check(L.t("Отметить / снять все", "Select/deselect all"), on: true)
         all.target = self
         all.action = #selector(toggleAll(_:))
-        let hint = UI.label(mode == .add ? ""
-            : L.t("Отмеченные файлы вернутся к последней фиксации. Отменить это нельзя.",
-                  "The checked files go back to the last commit. This cannot be undone."))
-        let content = UI.column(mode == .add ? [list] : [hint, list])
+        let content = UI.column([list, all], spacing: 9)
         list.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        install(content, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.perform() }, cancelButton], leading: [all])
+        install(content, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.perform() }, cancelButton, helpButton])
         watch(repo) { [weak self] in self?.reload() }
         reload()
     }
@@ -461,9 +523,16 @@ final class FilePickController: ToolWindow {
         guard !files.isEmpty else { return UI.alert(L.t("Не отмечено ни одного файла.", "No files are selected.")) }
         let steps = mode == .add ? [["add", "--"] + files.map(\.path)] : Git.revertSteps(files)
         let title = mode == .add ? L.t("Добавить", "Add") : L.t("Убрать изменения", "Revert")
-        let repo = self.repo
-        close()
+        // Отмена изменений необратима — спрашиваем, раз в самом окне предупреждения нет (как и в оригинале).
+        if mode == .revert, !UI.confirm(L.t("Убрать изменения в файлах (\(files.count))?", "Revert changes in \(files.count) file(s)?"),
+                                         info: L.t("Файлы вернутся к последней фиксации. Отменить это нельзя.",
+                                                   "The files go back to the last commit. This cannot be undone."),
+                                         ok: L.t("Убрать изменения", "Revert")) {
+            return
+        }
+        // Сначала окно хода, потом закрываем это: программа выходит, когда окон не осталось.
         ProgressController.run(title: title, dir: repo, steps: steps)
+        close()
     }
 }
 
