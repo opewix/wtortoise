@@ -28,6 +28,11 @@ enum Snapshot {
         add("sync", SyncDialog(repo: repo))
         add("switch", SwitchDialog(repo: repo))
         add("branch", BranchDialog(repo: repo))
+        add("pull", PullDialog(repo: repo))
+        add("fetch", FetchDialog(repo: repo))
+        add("tag", TagDialog(repo: repo))
+        add("merge", MergeDialog(repo: repo))
+        add("stash", StashDialog(repo: repo))
         add("remove", RemoveDialog(repo: repo, paths: ["README.md", "user.swift"]))
         let blameStart = ToolWindow.live.count
         BlameController.open(repo: repo, path: "README.md")

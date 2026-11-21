@@ -254,6 +254,28 @@ enum Settings {
         set { defaults.set(newValue, forKey: "gitPath") }
     }
 
+    /// Хранилища, где окно фиксации показывает изменения всего проекта, а не только выбранной папки.
+    static func wholeProject(_ repo: String) -> Bool {
+        (defaults.array(forKey: "wholeProjectRepos") as? [String] ?? []).contains(repo)
+    }
+
+    static func setWholeProject(_ on: Bool, for repo: String) {
+        var repos = (defaults.array(forKey: "wholeProjectRepos") as? [String] ?? []).filter { $0 != repo }
+        if on { repos.append(repo) }
+        defaults.set(repos, forKey: "wholeProjectRepos")
+    }
+
+    /// Недавние сообщения фиксаций хранилища, свежие первыми.
+    static func recentMessages(_ repo: String) -> [String] {
+        (defaults.dictionary(forKey: "recentMessages") as? [String: [String]])?[repo] ?? []
+    }
+
+    static func remember(message: String, for repo: String) {
+        var all = defaults.dictionary(forKey: "recentMessages") as? [String: [String]] ?? [:]
+        all[repo] = Array(([message] + (all[repo] ?? []).filter { $0 != message }).prefix(25))
+        defaults.set(all, forKey: "recentMessages")
+    }
+
     static var showUnversioned: Bool {
         get { defaults.object(forKey: "showUnversioned") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "showUnversioned") }

@@ -117,6 +117,8 @@ struct Commit {
     let date: Date
     let refs: [String]
     let subject: String
+    /// Что фиксация делала с файлами: буквы M, A, D, R из `--name-status` (столбец Actions журнала).
+    var actions: Set<Character> = []
 }
 
 /// Как строка журнала рисует граф: дорожки — столбцы слева направо.
@@ -136,6 +138,11 @@ struct CommitFile {
     let status: String
     let path: String
     let oldPath: String?
+
+    var ext: String {
+        let e = (path as NSString).pathExtension
+        return e.isEmpty ? "" : "." + e
+    }
 
     var statusText: String {
         switch status.first {
@@ -157,10 +164,16 @@ struct CommitFile {
 }
 
 extension Git {
-    static func log(_ repo: String, all: Bool, specs: [String], limit: Int) -> [Commit] {
-        var args = ["log", "--date-order", "-n", String(limit),
-                    "--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e"]
+    static func log(_ repo: String, all: Bool, specs: [String], limit: Int,
+                    firstParent: Bool = false, noMerges: Bool = false, range: String? = nil) -> [Commit] {
+        // Запись начинается с %x1e: за заголовком фиксации идут строки --name-status этой же фиксации.
+        var args = ["log", "--date-order", "-n", String(limit), "--name-status",
+                    "--pretty=format:%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f"]
         if all { args.append("--all") }
+        if firstParent { args.append("--first-parent") }
+        if noMerges { args.append("--no-merges") }
+        // Диапазон вида «a..b»: фиксации, которые есть в b и которых нет в a.
+        if let range { args.append(range) }
         args.append("--")
         args += specs
         let out = run(args, in: repo)
@@ -168,11 +181,17 @@ extension Git {
             let fields = record.trimmingCharacters(in: .newlines)
                 .split(separator: "\u{1f}", omittingEmptySubsequences: false).map(String.init)
             guard fields.count >= 7 else { return nil }
-            return Commit(hash: fields[0], parents: fields[1].split(separator: " ").map(String.init),
-                          author: fields[2], email: fields[3],
-                          date: Date(timeIntervalSince1970: TimeInterval(fields[4]) ?? 0),
-                          refs: fields[5].isEmpty ? [] : fields[5].components(separatedBy: ", "),
-                          subject: fields[6])
+            var commit = Commit(hash: fields[0], parents: fields[1].split(separator: " ").map(String.init),
+                                author: fields[2], email: fields[3],
+                                date: Date(timeIntervalSince1970: TimeInterval(fields[4]) ?? 0),
+                                refs: fields[5].isEmpty ? [] : fields[5].components(separatedBy: ", "),
+                                subject: fields[6])
+            if fields.count > 7 {
+                for line in fields[7].split(separator: "\n") {
+                    if let letter = line.first, "MADR".contains(letter) { commit.actions.insert(letter) }
+                }
+            }
+            return commit
         }
     }
 
@@ -205,6 +224,18 @@ extension Git {
             rows.append(row)
         }
         return rows
+    }
+
+    /// Добавлено и убрано строк по файлам фиксации (относительно первого родителя).
+    static func numstat(of commit: Commit, in repo: String) -> [String: (added: Int, removed: Int)] {
+        let base = commit.parents.first ?? emptyTree
+        var result: [String: (Int, Int)] = [:]
+        for line in run(["diff", "--numstat", "--no-renames", base, commit.hash], in: repo).lines {
+            let parts = line.split(separator: "\t", maxSplits: 2)
+            guard parts.count == 3 else { continue }
+            result[String(parts[2])] = (Int(parts[0]) ?? 0, Int(parts[1]) ?? 0)
+        }
+        return result
     }
 
     /// Файлы фиксации (относительно первого родителя).

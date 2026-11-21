@@ -69,14 +69,25 @@ final class FileListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         case "path":
             let title = file.oldPath.map { "\($0) → \(file.path)" } ?? file.path
             guard checkable else { return UI.textCell(title, color: file.color) }
-            let box = NSButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))
-            box.state = checked.contains(file.path) ? .on : .off
-            box.contentTintColor = file.color
-            box.attributedTitle = NSAttributedString(string: title, attributes: [
-                .foregroundColor: file.color, .font: NSFont.systemFont(ofSize: 12),
+            // Галочка — отдельная кнопка без подписи: она срабатывает только от щелчка по ней самой.
+            // Щелчок по названию выделяет строку, двойной — открывает сравнение.
+            let cell = UI.textCell(title, color: file.color)
+            let box = WinCheck("", on: checked.contains(file.path))
+            box.target = self
+            box.action = #selector(toggle(_:))
+            cell.addSubview(box)
+            if let label = cell.textField {
+                label.lineBreakMode = .byTruncatingMiddle
+                // Подпись сдвигаем вправо от галочки: прежнее ограничение левого края снимаем.
+                cell.constraints.filter { $0.firstItem === label && $0.firstAttribute == .leading }.forEach { $0.isActive = false }
+                label.leadingAnchor.constraint(equalTo: box.trailingAnchor, constant: 4).isActive = true
+            }
+            NSLayoutConstraint.activate([
+                box.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                box.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                box.widthAnchor.constraint(equalToConstant: 13),
             ])
-            box.lineBreakMode = .byTruncatingMiddle
-            return box
+            return cell
         case "ext": return UI.textCell(file.ext, color: file.color)
         case "status": return UI.textCell(file.statusText, color: file.color)
         case "added": return UI.textCell(stats[file.path].map { String($0.added) } ?? "", color: file.color, alignment: .right)
@@ -124,6 +135,12 @@ final class FileListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         menu.addItem(ClosureMenuItem(L.t("Сравнить с базой", "Compare with base"), glyph: .diff) {
             DiffController.openWorking(repo: repo, file: first)
         })
+        // Журнал — у файла под версией; у переименованного история идёт от прежнего имени.
+        if first.kind != .untracked {
+            menu.addItem(ClosureMenuItem(Command.log.title, glyph: .log) {
+                LogController(repo: repo, specs: [first.kind == .added ? first.path : (first.oldPath ?? first.path)]).present()
+            })
+        }
         menu.addItem(.separator())
         let revertable = targets.filter { $0.kind != .untracked }
         if !revertable.isEmpty {

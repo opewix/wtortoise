@@ -126,7 +126,7 @@ final class SettingsController: ToolWindow {
         form.section(L.t("Язык", "Language"))
         form.row(L.t("Язык окон и меню:", "Language:"), language)
         form.wide(UI.label(L.t("Смена языка действует после перезапуска программы.", "A language change takes effect after the app is restarted."), color: .secondaryLabelColor))
-        install(form.grid, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.save() }, cancelButton])
+        install(form.view, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.save() }, cancelButton])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

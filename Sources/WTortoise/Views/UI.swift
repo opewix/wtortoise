@@ -1,7 +1,7 @@
 import AppKit
 
 /// Кнопка с замыканием вместо target/action.
-final class ClosureButton: NSButton {
+final class ClosureButton: WinButton {
     private var handler: (() -> Void)?
 
     convenience init(_ title: String, key: String = "", handler: @escaping () -> Void) {
@@ -11,7 +11,7 @@ final class ClosureButton: NSButton {
         self.handler = handler
         keyEquivalent = key
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(greaterThanOrEqualToConstant: 86).isActive = true
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 75).isActive = true
     }
 
     @objc private func fire() { handler?() }
@@ -34,7 +34,7 @@ final class ClosureMenuItem: NSMenuItem {
 enum UI {
     static func label(_ text: String, bold: Bool = false, color: NSColor = .labelColor) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = bold ? .boldSystemFont(ofSize: 12) : .systemFont(ofSize: 12)
+        label.font = bold ? Win.boldFont : Win.font
         label.textColor = color
         label.lineBreakMode = .byTruncatingMiddle
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -42,7 +42,8 @@ enum UI {
     }
 
     static func field(_ value: String = "", placeholder: String = "", width: CGFloat = 280) -> NSTextField {
-        let field = NSTextField(string: value)
+        let field = WinField(string: value)
+        field.applyWinLook()
         field.placeholderString = placeholder
         field.translatesAutoresizingMaskIntoConstraints = false
         field.widthAnchor.constraint(greaterThanOrEqualToConstant: width).isActive = true
@@ -50,27 +51,30 @@ enum UI {
     }
 
     static func combo(_ items: [String], value: String = "", width: CGFloat = 280) -> NSComboBox {
-        let combo = NSComboBox()
+        let combo = WinCombo()
         combo.addItems(withObjectValues: items)
         combo.stringValue = value
         combo.completes = true
         combo.numberOfVisibleItems = 14
+        combo.font = Win.font
+        combo.bezelStyle = .squareBezel
+        combo.isButtonBordered = false
+        combo.focusRingType = .none
         combo.translatesAutoresizingMaskIntoConstraints = false
         combo.widthAnchor.constraint(greaterThanOrEqualToConstant: width).isActive = true
         return combo
     }
 
     static func popup(_ items: [String], selected: String? = nil) -> NSPopUpButton {
-        let popup = NSPopUpButton()
+        let popup = WinPopUp()
+        popup.translatesAutoresizingMaskIntoConstraints = false
         popup.addItems(withTitles: items)
         if let selected, items.contains(selected) { popup.selectItem(withTitle: selected) }
         return popup
     }
 
     static func check(_ title: String, on: Bool = false) -> NSButton {
-        let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
-        button.state = on ? .on : .off
-        return button
+        WinCheck(title, on: on)
     }
 
     static func row(_ views: [NSView], spacing: CGFloat = 8) -> NSStackView {
@@ -102,35 +106,61 @@ enum UI {
     }
 
     static func textView(editable: Bool, mono: Bool = false) -> (NSScrollView, NSTextView) {
-        let scroll = NSTextView.scrollableTextView()
-        let text = scroll.documentView as! NSTextView
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .white
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        text.minSize = .zero
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
+        scroll.documentView = text
         text.isEditable = editable
         text.isRichText = false
         text.allowsUndo = true
-        text.font = mono ? .monospacedSystemFont(ofSize: 11, weight: .regular) : .systemFont(ofSize: 12)
+        text.font = mono ? Win.monoFont : Win.font
+        text.textColor = Win.text
+        text.backgroundColor = .white
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticTextReplacementEnabled = false
         text.textContainerInset = NSSize(width: 2, height: 4)
-        scroll.borderType = .bezelBorder
+        UI.winBorder(scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         return (scroll, text)
     }
 
+    /// Рамка списков и полей Windows: одна точка серо-синего цвета вместо объёмной рамки macOS.
+    /// Саму линию рисует `WinScrollView` поверх рамки macOS, которая оставляет для неё место.
+    static func winBorder(_ scroll: NSScrollView) {
+        scroll.borderType = .lineBorder
+    }
+
     /// Таблица с колонками; `flex` — номер колонки, которая растягивается вместе с окном.
     static func table(_ columns: [(id: String, title: String, width: CGFloat)], flex: Int = 0) -> (NSScrollView, NSTableView) {
-        let table = NSTableView()
+        let table = WinTableView()
         for (index, spec) in columns.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.id))
             column.title = spec.title
+            // Свою ячейку заголовка не ставим: с ней строки списка пропадают при отрисовке окна в картинку.
+            // Родной заголовок macOS и так белый с тонкими разделителями — меняем только шрифт.
+            column.headerCell.attributedStringValue = NSAttributedString(string: spec.title, attributes: Win.attributes())
             column.width = spec.width
             column.minWidth = 30
             column.resizingMask = index == flex ? [.autoresizingMask, .userResizingMask] : .userResizingMask
             table.addTableColumn(column)
         }
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        table.rowHeight = 20
+        table.rowHeight = Win.rowHeight
         table.style = .plain
+        table.intercellSpacing = NSSize(width: 4, height: 0)
+        table.backgroundColor = .white
+        // Выделение рисует сама таблица (голубая плашка Windows), а не строки macOS.
+        table.selectionHighlightStyle = .none
         table.usesAlternatingRowBackgroundColors = false
         table.allowsMultipleSelection = true
         let scroll = NSScrollView()
@@ -138,7 +168,9 @@ enum UI {
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
-        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .white
+        UI.winBorder(scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         return (scroll, table)
     }
@@ -147,6 +179,7 @@ enum UI {
     static func textCell(_ text: String, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) -> NSTableCellView {
         let cell = NSTableCellView()
         let label = NSTextField(labelWithString: text)
+        label.font = Win.font
         label.textColor = color
         label.alignment = alignment
         label.lineBreakMode = .byTruncatingTail
@@ -184,31 +217,60 @@ enum UI {
     }
 }
 
-/// Форма «подпись — поле» для диалогов.
+/// Форма диалога: строки «подпись — поле», собранные в группы с рамкой и заголовком, как в окнах TortoiseGit.
 final class Form {
-    let grid = NSGridView(numberOfColumns: 2, rows: 0)
+    /// Всё содержимое формы — его и ставят в окно.
+    let view = UI.column([], spacing: 8)
+    /// Сетка текущей группы: строки добавляются в неё.
+    private(set) var grid: NSGridView
 
     init() {
-        grid.rowSpacing = 8
+        grid = Form.makeGrid()
+        view.addArrangedSubview(grid)
+        grid.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+    }
+
+    private static func makeGrid() -> NSGridView {
+        let grid = NSGridView(numberOfColumns: 2, rows: 0)
+        grid.rowSpacing = 7
         grid.columnSpacing = 8
         grid.rowAlignment = .firstBaseline
         grid.translatesAutoresizingMaskIntoConstraints = false
         grid.column(at: 1).xPlacement = .fill
+        return grid
     }
 
     func row(_ label: String, _ view: NSView) {
-        grid.addRow(with: [UI.label(label), view])
+        let title = UI.label(label)
+        // Подпись не сжимается в «…», а поле или список занимает всю оставшуюся ширину.
+        title.setContentCompressionResistancePriority(.required, for: .horizontal)
+        title.setContentHuggingPriority(.required, for: .horizontal)
+        view.setContentHuggingPriority(.init(1), for: .horizontal)
+        grid.addRow(with: [title, view])
     }
 
-    /// Строка на всю ширину формы.
+    /// Строка на всю ширину группы.
     func wide(_ view: NSView) {
         let row = grid.addRow(with: [view, NSGridCell.emptyContentView])
         row.mergeCells(in: NSRange(location: 0, length: 2))
         row.rowAlignment = .none
     }
 
+    /// Начать группу с рамкой; следующие строки идут в неё.
     func section(_ title: String) {
-        wide(UI.label(title, bold: true))
+        // Пустую сетку перед первой группой убираем, чтобы не оставалось зазора.
+        if grid.numberOfRows == 0 { grid.removeFromSuperview() }
+        grid = Form.makeGrid()
+        let box = WinGroupBox(title, content: grid)
+        view.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+    }
+
+    /// Закончить группу: следующие строки идут под рамкой, без неё.
+    func plain() {
+        grid = Form.makeGrid()
+        view.addArrangedSubview(grid)
+        grid.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
     }
 }
 
@@ -224,6 +286,10 @@ class ToolWindow: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
+        // Окна светлые и серые, как диалоги Windows, при любой теме macOS.
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = Win.face
+        window.contentView = WinFaceView()
         fitsContent = !resizable
         super.init(window: window)
         window.delegate = self
@@ -239,19 +305,19 @@ class ToolWindow: NSWindowController, NSWindowDelegate {
     func install(_ content: NSView, buttons: [NSView], leading: [NSView] = []) {
         guard let root = window?.contentView else { return }
         content.translatesAutoresizingMaskIntoConstraints = false
-        let bar = UI.row(leading + [UI.spacer()] + buttons)
+        let bar = UI.row(leading + [UI.spacer()] + buttons, spacing: 7)
         // Растягивается содержимое, а не ряд кнопок.
         bar.setHuggingPriority(.required, for: .vertical)
         root.addSubview(content)
         root.addSubview(bar)
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            bar.topAnchor.constraint(equalTo: content.bottomAnchor, constant: 12),
-            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            bar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            bar.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 11),
+            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 11),
+            content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -11),
+            bar.topAnchor.constraint(equalTo: content.bottomAnchor, constant: 11),
+            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 11),
+            bar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -11),
+            bar.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -11),
         ])
         if fitsContent {
             root.layoutSubtreeIfNeeded()
@@ -293,6 +359,10 @@ class ToolWindow: NSWindowController, NSWindowDelegate {
 
     var okButton: ClosureButton {
         ClosureButton("OK", key: "\r") { [weak self] in self?.close() }
+    }
+
+    var helpButton: ClosureButton {
+        ClosureButton(L.t("Справка", "Help")) { NSWorkspace.shared.open(URL(string: "https://github.com/opewix/wtortoise#readme")!) }
     }
 
     var closeButton: ClosureButton {

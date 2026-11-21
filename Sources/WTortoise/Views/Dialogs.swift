@@ -13,6 +13,7 @@ final class RefChooser: NSObject, NSComboBoxDelegate, NSTextFieldDelegate {
 
     /// - Parameter preset: хеш, с которым диалог открыт из журнала.
     init(repo: String, allowHead: Bool, preset: String? = nil) {
+        let headTitle = "HEAD (\(Git.headName(repo)))"
         hasHead = allowHead
         let local = Git.localBranches(repo)
         remoteBranches = Git.remoteBranches(repo)
@@ -26,11 +27,11 @@ final class RefChooser: NSObject, NSComboBoxDelegate, NSTextFieldDelegate {
         view.rowAlignment = .firstBaseline
         view.translatesAutoresizingMaskIntoConstraints = false
         func radio(_ title: String) -> NSButton {
-            let button = NSButton(radioButtonWithTitle: title, target: self, action: #selector(pick(_:)))
+            let button = WinRadio(title, target: self, action: #selector(pick(_:)))
             radios.append(button)
             return button
         }
-        if allowHead { view.addRow(with: [radio("HEAD"), NSGridCell.emptyContentView]) }
+        if allowHead { view.addRow(with: [radio(headTitle), NSGridCell.emptyContentView]) }
         view.addRow(with: [radio(L.t("Ветка", "Branch")), branches])
         view.addRow(with: [radio(L.t("Метка", "Tag")), tags])
         view.addRow(with: [radio(L.t("Фиксация", "Commit")), commit])
@@ -107,7 +108,8 @@ class FormDialog: ToolWindow {
 
     /// Вызвать в конце init наследника, когда форма заполнена.
     func finish(ok: String? = nil) {
-        install(form.grid, buttons: [ClosureButton(ok ?? "OK", key: "\r") { [weak self] in self?.submit() }, cancelButton])
+        form.view.widthAnchor.constraint(greaterThanOrEqualToConstant: 430).isActive = true
+        install(form.view, buttons: [ClosureButton(ok ?? "OK", key: "\r") { [weak self] in self?.submit() }, cancelButton, helpButton])
     }
 
     /// Команды git для выполнения; nil — ввод неполон (наследник сам показал, что не так).
@@ -135,10 +137,11 @@ class FormDialog: ToolWindow {
 
 final class PushDialog: FormDialog {
     private var local: NSComboBox!
-    private let remoteBranch = UI.field(placeholder: L.t("как локальная", "same as local"))
+    private var remoteBranch: NSComboBox!
     private var remote: NSPopUpButton!
-    private let force = UI.check(L.t("Принудительно, если на сервере нет чужих изменений (--force-with-lease)", "Force with lease"))
-    private let forceAny = UI.check(L.t("Принудительно, затирая и чужие изменения (--force)", "Force"))
+    private let allBranches = UI.check(L.t("Отправить все ветки", "Push all branches"))
+    private let force = UI.check(L.t("известные изменения", "known changes"))
+    private let forceAny = UI.check(L.t("неизвестные изменения", "unknown changes"))
     private let tags = UI.check(L.t("Вместе с метками", "Include Tags"))
     private let setUpstream = UI.check(L.t("Запомнить ветку сервера для отслеживания", "Set upstream/track remote branch"))
 
@@ -146,18 +149,24 @@ final class PushDialog: FormDialog {
         super.init(repo: repo, name: L.t("Отправить", "Push"))
         let upstream = Git.upstream(repo)
         let remotes = Git.remotes(repo)
-        local = UI.combo(Git.localBranches(repo), value: Git.currentBranch(repo) ?? "")
-        remote = UI.popup(remotes, selected: upstream?.remote ?? "origin")
-        remoteBranch.stringValue = upstream?.branch ?? ""
+        let chosen = upstream?.remote ?? (remotes.contains("origin") ? "origin" : remotes.first ?? "")
+        let current = Git.currentBranch(repo) ?? ""
+        local = UI.combo(Git.localBranches(repo), value: current)
+        let names = Git.remoteBranches(repo).filter { $0.hasPrefix(chosen + "/") }.map { String($0.dropFirst(chosen.count + 1)) }
+        remoteBranch = UI.combo(names, value: upstream?.branch ?? current)
+        remote = UI.popup(remotes, selected: chosen)
         setUpstream.state = upstream == nil ? .on : .off
+        allBranches.target = self
+        allBranches.action = #selector(allChanged)
         form.section(L.t("Что отправить", "Ref"))
-        form.row(L.t("Локальная ветка:", "Local:"), local)
-        form.row(L.t("Ветка на сервере:", "Remote:"), remoteBranch)
+        form.wide(allBranches)
+        form.row(L.t("Локальная:", "Local:"), local)
+        form.row(L.t("На сервере:", "Remote:"), remoteBranch)
         form.section(L.t("Куда", "Destination"))
         form.row(L.t("Сервер:", "Remote:"), remote)
         form.section(L.t("Параметры", "Options"))
-        form.wide(force)
-        form.wide(forceAny)
+        // «Force: May discard» — известные изменения (--force-with-lease) или любые (--force).
+        form.wide(UI.row([UI.label(L.t("Принудительно: могут пропасть", "Force: May discard")), UI.spacer(), force, UI.spacer(), forceAny, UI.spacer()]))
         form.wide(tags)
         form.wide(setUpstream)
         finish()
@@ -165,13 +174,17 @@ final class PushDialog: FormDialog {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    @objc private func allChanged() {
+        local.isEnabled = allBranches.state != .on
+        remoteBranch.isEnabled = allBranches.state != .on
+    }
+
     override func steps() -> [[String]]? {
         guard let remoteName = remote.titleOfSelectedItem else {
             UI.alert(L.t("У хранилища нет серверов.", "This repository has no remotes."),
                      info: L.t("Добавьте сервер: git remote add origin <адрес>.", "Add one first: git remote add origin <url>."))
             return nil
         }
-        guard let branch = required(local.stringValue, L.t("локальная ветка", "local branch")) else { return nil }
         var args = ["push", "--progress"]
         if forceAny.state == .on {
             guard UI.confirm(L.t("Отправить принудительно?", "Force push?"),
@@ -183,36 +196,58 @@ final class PushDialog: FormDialog {
         }
         if tags.state == .on { args.append("--tags") }
         if setUpstream.state == .on { args.append("-u") }
+        if allBranches.state == .on { return [args + ["--all", remoteName]] }
+        guard let branch = required(local.stringValue, L.t("локальная ветка", "local branch")) else { return nil }
         let target = remoteBranch.stringValue.trimmingCharacters(in: .whitespaces)
         args += [remoteName, target.isEmpty || target == branch ? branch : "\(branch):\(target)"]
         return [args]
     }
 }
 
-final class PullDialog: FormDialog {
-    private var remote: NSPopUpButton!
-    private var branch: NSComboBox!
-    private let rebase = UI.check(L.t("Перенести свои фиксации поверх (rebase)", "Rebase"))
-    private let ffOnly = UI.check(L.t("Только перемотка (--ff-only)", "Fast Forward Only"))
-    private let prune = UI.check(L.t("Убрать ветки, удалённые на сервере (--prune)", "Prune"))
-    private let tags = UI.check(L.t("Получить метки", "Tags"))
+/// Общая раскладка окон Pull и Fetch: сервер и ветка, параметры слияния (у Fetch недоступны), метки и очистка.
+class RemoteDialog: FormDialog {
+    var remote: NSPopUpButton!
+    var branch: NSComboBox!
+    let squash = UI.check(L.t("Одной фиксацией", "Squash"))
+    let noCommit = UI.check(L.t("Не фиксировать", "No Commit"))
+    let noFF = UI.check(L.t("Без перемотки", "No Fast Forward"))
+    let ffOnly = UI.check(L.t("Только перемотка", "Fast Forward Only"))
+    let tags = UI.check(L.t("Метки", "Tags"))
+    let prune = UI.check(L.t("Убрать удалённые на сервере", "Prune"))
+    let rebase = UI.check(L.t("Перенести свои фиксации поверх (rebase)", "Launch Rebase After Fetch"))
 
-    init(repo: String) {
-        super.init(repo: repo, name: L.t("Получить", "Pull"))
+    init(repo: String, name: String, merging: Bool) {
+        super.init(repo: repo, name: name)
         let upstream = Git.upstream(repo)
         let remotes = Git.remotes(repo)
         let chosen = upstream?.remote ?? (remotes.contains("origin") ? "origin" : remotes.first ?? "")
         remote = UI.popup(remotes, selected: chosen)
         let names = Git.remoteBranches(repo).filter { $0.hasPrefix(chosen + "/") }.map { String($0.dropFirst(chosen.count + 1)) }
         branch = UI.combo(names, value: upstream?.branch ?? Git.currentBranch(repo) ?? "")
+        branch.isEnabled = merging
+        for box in [squash, noCommit, noFF, ffOnly] { box.isEnabled = merging }
+        form.section(L.t("Сервер", "Remote"))
         form.row(L.t("Сервер:", "Remote:"), remote)
         form.row(L.t("Ветка на сервере:", "Remote Branch:"), branch)
         form.section(L.t("Параметры", "Options"))
+        form.grid.addRow(with: [squash, noCommit])
+        form.grid.addRow(with: [noFF, ffOnly])
+        form.grid.addRow(with: [tags, NSGridCell.emptyContentView])
+        form.grid.addRow(with: [prune, NSGridCell.emptyContentView])
+        // Два столбца флажков, как в оригинале: правый начинается с середины группы.
+        form.grid.column(at: 0).width = 200
+        form.grid.column(at: 1).xPlacement = .leading
+        form.plain()
         form.wide(rebase)
-        form.wide(ffOnly)
-        form.wide(prune)
-        form.wide(tags)
         finish()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+}
+
+final class PullDialog: RemoteDialog {
+    init(repo: String) {
+        super.init(repo: repo, name: L.t("Получить", "Pull"), merging: true)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -226,25 +261,19 @@ final class PullDialog: FormDialog {
         var args = ["pull", "--progress"]
         // Без явного выбора git отказывается сливать разошедшиеся ветки.
         if ffOnly.state == .on { args.append("--ff-only") } else { args.append(rebase.state == .on ? "--rebase" : "--no-rebase") }
+        if squash.state == .on { args.append("--squash") }
+        if noCommit.state == .on { args.append("--no-commit") }
+        if noFF.state == .on && ffOnly.state != .on { args.append("--no-ff") }
         if prune.state == .on { args.append("--prune") }
         if tags.state == .on { args.append("--tags") }
         return [args + [remoteName, name]]
     }
 }
 
-final class FetchDialog: FormDialog {
-    private var remote: NSPopUpButton!
-    private let prune = UI.check(L.t("Убрать ветки, удалённые на сервере (--prune)", "Prune"), on: true)
-    private let tags = UI.check(L.t("Получить метки", "Tags"))
-
+final class FetchDialog: RemoteDialog {
     init(repo: String) {
-        super.init(repo: repo, name: L.t("Извлечь", "Fetch"))
-        let remotes = Git.remotes(repo)
-        remote = UI.popup([L.t("Все серверы", "All remotes")] + remotes, selected: remotes.count == 1 ? remotes[0] : nil)
-        form.row(L.t("Сервер:", "Remote:"), remote)
-        form.wide(prune)
-        form.wide(tags)
-        finish()
+        super.init(repo: repo, name: L.t("Извлечь", "Fetch"), merging: false)
+        prune.state = .on
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -253,8 +282,13 @@ final class FetchDialog: FormDialog {
         var args = ["fetch", "--progress"]
         if prune.state == .on { args.append("--prune") }
         if tags.state == .on { args.append("--tags") }
-        args.append(remote.indexOfSelectedItem == 0 ? "--all" : remote.titleOfSelectedItem ?? "--all")
-        return [args]
+        args.append(remote.titleOfSelectedItem ?? "--all")
+        var steps = [args]
+        // «Launch Rebase After Fetch»: после получения переносим свои фиксации поверх ветки сервера.
+        if rebase.state == .on, let remoteName = remote.titleOfSelectedItem, !branch.stringValue.isEmpty {
+            steps.append(["rebase", "\(remoteName)/\(branch.stringValue)"])
+        }
+        return steps
     }
 }
 
@@ -320,13 +354,12 @@ final class BranchDialog: FormDialog {
     init(repo: String, preset: String? = nil) {
         super.init(repo: repo, name: L.t("Создать ветку", "Create Branch"))
         chooser = RefChooser(repo: repo, allowHead: true, preset: preset)
-        form.row(L.t("Имя ветки:", "Branch"), name)
+        form.section(L.t("Имя", "Name"))
+        form.row(L.t("Ветка", "Branch"), name)
         form.section(L.t("От чего", "Base On"))
         form.wide(chooser.view)
         form.section(L.t("Параметры", "Options"))
-        form.wide(track)
-        form.wide(force)
-        form.wide(switchTo)
+        form.wide(UI.row([track, UI.spacer(), force, UI.spacer(), switchTo]))
         finish()
         window?.initialFirstResponder = name
     }
@@ -346,18 +379,20 @@ final class BranchDialog: FormDialog {
 final class TagDialog: FormDialog {
     private var chooser: RefChooser!
     private let name = UI.field()
-    private let message = UI.field(placeholder: L.t("пусто — простая метка, без сообщения", "empty — a lightweight tag"))
+    private let message = UI.field(width: 400)
     private let force = UI.check(L.t("Переставить, если метка уже есть", "Force"))
 
     init(repo: String, preset: String? = nil) {
         super.init(repo: repo, name: L.t("Создать метку", "Create Tag"))
         chooser = RefChooser(repo: repo, allowHead: true, preset: preset)
-        form.row(L.t("Метка:", "Tag:"), name)
+        form.section(L.t("Имя", "Name"))
+        form.row(L.t("Метка", "Tag"), name)
         form.section(L.t("На чём", "Base On"))
         form.wide(chooser.view)
         form.section(L.t("Параметры", "Options"))
-        form.row(L.t("Сообщение:", "Message"), message)
         form.wide(force)
+        form.section(L.t("Сообщение", "Message"))
+        form.wide(message)
         finish()
         window?.initialFirstResponder = name
     }
@@ -379,7 +414,8 @@ final class MergeDialog: FormDialog {
     private let squash = UI.check(L.t("Одной фиксацией (--squash)", "Squash"))
     private let noFF = UI.check(L.t("Всегда создавать фиксацию слияния (--no-ff)", "No Fast Forward"))
     private let noCommit = UI.check(L.t("Не фиксировать (--no-commit)", "No Commit"))
-    private let message = UI.field(placeholder: L.t("пусто — сообщение по умолчанию", "empty — the default message"))
+    private let ffOnly = UI.check(L.t("Только перемотка", "Fast Forward Only"))
+    private let message = UI.field(placeholder: "<Auto Generated by Git>", width: 400)
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Слить", "Merge"))
@@ -387,10 +423,11 @@ final class MergeDialog: FormDialog {
         form.section(L.t("Слить в «\(Git.headName(repo))» из", "From"))
         form.wide(chooser.view)
         form.section(L.t("Параметры", "Option"))
-        form.wide(squash)
-        form.wide(noFF)
-        form.wide(noCommit)
-        form.row(L.t("Сообщение слияния:", "Merge Message"), message)
+        form.grid.addRow(with: [squash, ffOnly])
+        form.grid.addRow(with: [noFF, NSGridCell.emptyContentView])
+        form.grid.addRow(with: [noCommit, NSGridCell.emptyContentView])
+        form.section(L.t("Сообщение слияния", "Merge Message"))
+        form.wide(message)
         finish()
     }
 
@@ -403,7 +440,7 @@ final class MergeDialog: FormDialog {
         }
         var args = ["merge"]
         if squash.state == .on { args.append("--squash") }
-        if noFF.state == .on { args.append("--no-ff") }
+        if ffOnly.state == .on { args.append("--ff-only") } else if noFF.state == .on { args.append("--no-ff") }
         if noCommit.state == .on { args.append("--no-commit") }
         let text = message.stringValue.trimmingCharacters(in: .whitespaces)
         if !text.isEmpty { args += ["-m", text] }
@@ -427,7 +464,7 @@ final class ResetDialog: FormDialog {
             L.t("Жёсткий: сбросить всё, изменения рабочей копии пропадут", "Hard: Reset working tree and index (discard all local changes)"),
         ]
         let group = UI.column(titles.map { title in
-            let radio = NSButton(radioButtonWithTitle: title, target: self, action: #selector(pick))
+            let radio = WinRadio(title, target: self, action: #selector(pick))
             modes.append(radio)
             return radio
         }, spacing: 6)
@@ -451,21 +488,26 @@ final class ResetDialog: FormDialog {
 }
 
 final class StashDialog: FormDialog {
-    private let message = UI.field(placeholder: L.t("необязательно", "optional"))
+    private let message = UI.field(width: 400)
     private let untracked = UI.check(L.t("Вместе с файлами не под версией", "include untracked"))
+    private let all = UI.check(L.t("И с игнорируемыми (--all)", "--all"))
 
     init(repo: String) {
         super.init(repo: repo, name: L.t("Спрятать изменения", "Stash"))
-        form.row(L.t("Сообщение:", "Stash Message"), message)
+        form.section(L.t("Сообщение", "Stash Message"))
+        form.wide(message)
+        form.section(L.t("Параметры", "Options"))
         form.wide(untracked)
+        form.wide(all)
         finish()
+        window?.initialFirstResponder = message
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override func steps() -> [[String]]? {
         var args = ["stash", "push"]
-        if untracked.state == .on { args.append("-u") }
+        if all.state == .on { args.append("--all") } else if untracked.state == .on { args.append("-u") }
         let text = message.stringValue.trimmingCharacters(in: .whitespaces)
         if !text.isEmpty { args += ["-m", text] }
         return [args]
@@ -533,9 +575,15 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
     private let parent: String
     private let url = UI.field(width: 360)
     private let directory = UI.field(width: 360)
-    private let branch = UI.field(placeholder: L.t("ветка по умолчанию", "the default branch"), width: 200)
-    private let depth = UI.field(placeholder: L.t("вся история", "full history"), width: 200)
-    private let recursive = UI.check(L.t("С подмодулями (--recursive)", "Recursive"))
+    private let branch = UI.field(width: 110)
+    private let depth = UI.field("1", width: 50)
+    private let origin = UI.field(width: 110)
+    private let depthOn = UI.check(L.t("Глубина", "Depth"))
+    private let branchOn = UI.check(L.t("Ветка", "Branch"))
+    private let originOn = UI.check(L.t("Имя сервера", "Origin Name"))
+    private let recursive = UI.check(L.t("С подмодулями", "Recursive"))
+    private let bare = UI.check(L.t("Без рабочей копии (bare)", "Clone into Bare Repo"))
+    private let noCheckout = UI.check(L.t("Не извлекать файлы", "No Checkout"))
     /// Папку подставляем по адресу, пока человек не ввёл свою.
     private var directoryEdited = false
 
@@ -550,11 +598,16 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
         url.delegate = self
         directory.delegate = self
         let browse = ClosureButton(L.t("Обзор…", "Browse...")) { [weak self] in self?.browse() }
+        form.section(L.t("Клонировать существующее хранилище", "Clone Existing Repository"))
         form.row("URL:", url)
         form.row(L.t("Папка:", "Directory:"), UI.row([directory, browse]))
-        form.row(L.t("Ветка:", "Branch"), branch)
-        form.row(L.t("Глубина:", "Depth"), depth)
-        form.wide(recursive)
+        form.wide(UI.row([depthOn, depth, recursive, UI.spacer(), bare, UI.spacer(), noCheckout], spacing: 10))
+        form.wide(UI.row([branchOn, branch, UI.spacer(), originOn, origin, UI.spacer()], spacing: 10))
+        for box in [depthOn, branchOn, originOn] {
+            box.target = self
+            box.action = #selector(optionsChanged)
+        }
+        optionsChanged()
         finish()
         suggestDirectory()
         window?.initialFirstResponder = url
@@ -563,6 +616,13 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var workDir: String { parent }
+
+    /// Поля глубины, ветки и имени сервера доступны, только когда стоит их флажок.
+    @objc private func optionsChanged() {
+        depth.isEnabled = depthOn.state == .on
+        branch.isEnabled = branchOn.state == .on
+        origin.isEnabled = originOn.state == .on
+    }
 
     func controlTextDidChange(_ obj: Notification) {
         if (obj.object as? NSTextField) === directory {
@@ -599,10 +659,14 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
               let target = required(directory.stringValue, L.t("папка", "directory")) else { return nil }
         var args = ["clone", "--progress"]
         if recursive.state == .on { args.append("--recursive") }
+        if bare.state == .on { args.append("--bare") }
+        if noCheckout.state == .on { args.append("--no-checkout") }
         let branchName = branch.stringValue.trimmingCharacters(in: .whitespaces)
-        if !branchName.isEmpty { args += ["-b", branchName] }
+        if branchOn.state == .on, !branchName.isEmpty { args += ["-b", branchName] }
+        let originName = origin.stringValue.trimmingCharacters(in: .whitespaces)
+        if originOn.state == .on, !originName.isEmpty { args += ["-o", originName] }
         let depthValue = depth.stringValue.trimmingCharacters(in: .whitespaces)
-        if !depthValue.isEmpty {
+        if depthOn.state == .on {
             guard let number = Int(depthValue), number > 0 else {
                 UI.alert(L.t("Глубина — целое число больше нуля.", "Depth must be a positive number."))
                 return nil
@@ -614,37 +678,96 @@ final class CloneDialog: FormDialog, NSTextFieldDelegate {
 }
 
 /// «Синхронизация»: получить, извлечь и отправить из одного окна. Окно остаётся открытым между командами.
-final class SyncDialog: ToolWindow {
+/// Раскладка — как у Git Synchronization в TortoiseGit: ветки и сервер, список входящих и исходящих фиксаций, кнопки.
+final class SyncDialog: ToolWindow, NSTableViewDataSource, NSTableViewDelegate {
     private let repo: String
     private var local: NSComboBox!
     private var remote: NSPopUpButton!
-    private let remoteBranch = UI.field(placeholder: L.t("как локальная", "same as local"))
-    private let state = UI.label("", color: .secondaryLabelColor)
+    private var remoteBranch: NSComboBox!
+    private let force = UI.check(L.t("Принудительно", "Force"))
+    private let state = UI.label("")
     private let hasUpstream: Bool
+    private var table: NSTableView!
+    private var incoming: [Commit] = []
+    private var outgoing: [Commit] = []
+    private var showsIncoming = false
+    private var inTab: ClosureButton!
+    private var outTab: ClosureButton!
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 
     init(repo: String) {
         self.repo = repo
         let upstream = Git.upstream(repo)
         hasUpstream = upstream != nil
-        super.init(title: ToolWindow.title(repo, L.t("Синхронизация", "Git Synchronization")),
-                   size: NSSize(width: 560, height: 200), resizable: false)
+        super.init(title: ToolWindow.title(repo, L.t("Синхронизация", "Git Synchronization")), size: NSSize(width: 700, height: 470))
         let remotes = Git.remotes(repo)
-        local = UI.combo(Git.localBranches(repo), value: Git.currentBranch(repo) ?? "")
-        remote = UI.popup(remotes, selected: upstream?.remote ?? "origin")
-        remoteBranch.stringValue = upstream?.branch ?? ""
-        let form = Form()
-        form.row(L.t("Локальная ветка:", "Local Branch:"), local)
-        form.row(L.t("Сервер:", "Remote URL:"), remote)
-        form.row(L.t("Ветка на сервере:", "Remote Branch:"), remoteBranch)
-        form.wide(state)
-        install(form.grid, buttons: [
-            ClosureButton(Command.pull.plainTitle) { [weak self] in self?.pull() },
-            ClosureButton(Command.fetch.plainTitle) { [weak self] in self?.fetch() },
-            ClosureButton(Command.push.plainTitle) { [weak self] in self?.push() },
-            ClosureButton(Command.commit.title) { [repo] in CommitController(repo: repo, specs: []).present() },
-            ClosureButton(Command.log.title) { [repo] in LogController(repo: repo, specs: []).present() },
-            closeButton,
+        let chosen = upstream?.remote ?? (remotes.contains("origin") ? "origin" : remotes.first ?? "")
+        let current = Git.currentBranch(repo) ?? ""
+        local = UI.combo(Git.localBranches(repo), value: current, width: 150)
+        let names = Git.remoteBranches(repo).filter { $0.hasPrefix(chosen + "/") }.map { String($0.dropFirst(chosen.count + 1)) }
+        remoteBranch = UI.combo(names, value: upstream?.branch ?? current, width: 180)
+        remote = UI.popup(remotes, selected: chosen)
+        remote.setContentHuggingPriority(.init(1), for: .horizontal)
+        for control in [local!, remoteBranch!, remote!] as [NSControl] {
+            control.target = self
+            control.action = #selector(refresh)
+        }
+
+        let branches = UI.row([UI.label(L.t("Локальная ветка:", "Local Branch:")), local, UI.spacer(),
+                               UI.label(L.t("Ветка на сервере:", "Remote Branch:")), remoteBranch])
+        let server = UI.row([UI.label(L.t("Сервер:", "Remote URL:")), remote])
+        let options = UI.row([force, UI.spacer()])
+        let head = UI.column([branches, server, options], spacing: 7)
+        for view in [branches, server, options] { view.widthAnchor.constraint(equalTo: head.widthAnchor).isActive = true }
+        let top = WinGroupBox("", content: head)
+
+        let (scroll, table) = UI.table([
+            ("sha", "SHA-1", 80), ("message", L.t("Сообщение", "Message"), 330),
+            ("author", L.t("Автор", "Author"), 130), ("date", L.t("Дата", "Date"), 140),
+        ], flex: 1)
+        self.table = table
+        table.dataSource = self
+        table.delegate = self
+        table.allowsMultipleSelection = false
+
+        // Закладки под списком: какие фиксации показывать.
+        func tab(_ title: String, incoming: Bool) -> ClosureButton {
+            let button = ClosureButton(title) { [weak self] in
+                self?.showsIncoming = incoming
+                self?.refresh()
+            }
+            button.look = .link
+            button.constraints.forEach { $0.isActive = false }
+            return button
+        }
+        inTab = tab(L.t("Входящие", "In Commits"), incoming: true)
+        outTab = tab(L.t("Исходящие", "Out Commits"), incoming: false)
+        let tabs = UI.row([inTab, outTab, UI.spacer()], spacing: 14)
+
+        let pull = WinSplitButton([
+            (L.t("Получить", "Pull"), { [weak self] in self?.pull(rebase: false) }),
+            (L.t("Извлечь", "Fetch"), { [weak self] in self?.fetch(rebase: false) }),
+            (L.t("Извлечь и перенести", "Fetch & Rebase"), { [weak self] in self?.fetch(rebase: true) }),
         ])
+        let push = WinSplitButton([
+            (L.t("Отправить", "Push"), { [weak self] in self?.push(tags: false) }),
+            (L.t("Отправить метки", "Push tags"), { [weak self] in self?.push(tags: true) }),
+        ])
+        let showLog = ClosureButton(Command.log.title) { [repo] in LogController(repo: repo, specs: []).present() }
+        let commit = ClosureButton(L.t("Фиксация", "Commit")) { [repo] in CommitController(repo: repo, specs: []).present() }
+        let stash = ClosureButton(Command.stashSave.title) { [repo] in StashDialog(repo: repo).present() }
+        for button in [showLog, commit, stash] { button.widthAnchor.constraint(greaterThanOrEqualToConstant: 124).isActive = true }
+        let actions = UI.row([pull, push, UI.spacer()])
+        let content = UI.column([top, scroll, tabs, actions, UI.row([showLog, commit, stash, UI.spacer()])], spacing: 8)
+        for view in [top, scroll, tabs, actions] as [NSView] { view.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true }
+        for view in [top, tabs, actions] as [NSView] { view.setContentHuggingPriority(.required, for: .vertical) }
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+
+        install(content, buttons: [closeButton, helpButton], leading: [state])
         watch(repo) { [weak self] in self?.refresh() }
         refresh()
     }
@@ -667,29 +790,40 @@ final class SyncDialog: ToolWindow {
         return (remoteName, branch, other.isEmpty ? branch : other)
     }
 
-    private func pull() {
+    private func pull(rebase: Bool) {
         guard let t = target() else { return }
         // Без явного выбора git отказывается сливать разошедшиеся ветки.
         ProgressController.run(title: Command.pull.plainTitle, dir: repo,
-                               steps: [["pull", "--progress", "--no-rebase", t.remote, t.branch]])
+                               steps: [["pull", "--progress", rebase ? "--rebase" : "--no-rebase", t.remote, t.branch]])
     }
 
-    private func fetch() {
+    private func fetch(rebase: Bool) {
         guard let t = target() else { return }
-        ProgressController.run(title: Command.fetch.plainTitle, dir: repo, steps: [["fetch", "--progress", "--prune", t.remote]])
+        var steps = [["fetch", "--progress", "--prune", t.remote]]
+        if rebase { steps.append(["rebase", "\(t.remote)/\(t.branch)"]) }
+        ProgressController.run(title: Command.fetch.plainTitle, dir: repo, steps: steps)
     }
 
-    private func push() {
+    private func push(tags: Bool) {
         guard let t = target() else { return }
         var args = ["push", "--progress"]
+        if force.state == .on {
+            guard UI.confirm(L.t("Отправить принудительно?", "Force push?"),
+                             info: L.t("Фиксации на сервере, которых нет у вас, будут потеряны.", "Commits on the remote that you do not have will be lost."),
+                             ok: L.t("Отправить принудительно", "Force Push")) else { return }
+            args.append("--force")
+        }
+        if tags { args.append("--tags") }
         // Ветка ещё ни за чем не следит — запоминаем, куда отправили.
         if !hasUpstream { args.append("-u") }
         ProgressController.run(title: Command.push.plainTitle, dir: repo,
                                steps: [args + [t.remote, t.local == t.branch ? t.local : "\(t.local):\(t.branch)"]])
     }
 
-    /// Насколько разошлись локальная ветка и ветка сервера — по тому, что известно после последнего Fetch.
-    private func refresh() {
+    /// Входящие и исходящие фиксации — по тому, что известно после последнего Fetch.
+    @objc private func refresh() {
+        inTab.linkBold = showsIncoming
+        outTab.linkBold = !showsIncoming
         guard let remoteName = remote.titleOfSelectedItem else {
             state.stringValue = L.t("У хранилища нет серверов.", "This repository has no remotes.")
             return
@@ -697,14 +831,33 @@ final class SyncDialog: ToolWindow {
         let branch = local.stringValue.trimmingCharacters(in: .whitespaces)
         let other = remoteBranch.stringValue.trimmingCharacters(in: .whitespaces)
         let tracking = "\(remoteName)/\(other.isEmpty ? branch : other)"
-        let counts = Git.run(["rev-list", "--left-right", "--count", "\(branch)...\(tracking)"], in: repo)
-        let parts = counts.trimmed.split(whereSeparator: { $0 == "\t" || $0 == " " }).compactMap { Int($0) }
-        guard counts.ok, parts.count == 2 else {
+        guard Git.run(["rev-parse", "--verify", "-q", tracking], in: repo).ok else {
+            incoming = []
+            outgoing = []
+            table.reloadData()
             state.stringValue = L.t("Ветки \(tracking) у вас ещё нет: её создаст Push или покажет Fetch.",
-                                    "\(tracking) is not known here yet: Push creates it, Fetch finds it.")
+                                    "\"\(tracking)\" is not known here yet: Push creates it, Fetch finds it.")
             return
         }
-        state.stringValue = L.t("К отправке: \(parts[0]), к получению: \(parts[1]) (по данным последнего Fetch)",
-                                "Out commits: \(parts[0]), in commits: \(parts[1]) (as of the last fetch)")
+        outgoing = Git.log(repo, all: false, specs: [], limit: 500, range: "\(tracking)..\(branch)")
+        incoming = Git.log(repo, all: false, specs: [], limit: 500, range: "\(branch)..\(tracking)")
+        table.reloadData()
+        state.stringValue = L.t("К отправке: \(outgoing.count), к получению: \(incoming.count) — «\(tracking)»",
+                                "\(outgoing.count) commits ahead, \(incoming.count) behind \"\(tracking)\"")
+    }
+
+    private var shown: [Commit] { showsIncoming ? incoming : outgoing }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let commit = shown[row]
+        switch tableColumn?.identifier.rawValue {
+        case "sha": return UI.textCell(String(commit.hash.prefix(8)) + "...")
+        case "message": return UI.textCell(commit.subject)
+        case "author": return UI.textCell(commit.author)
+        case "date": return UI.textCell(dateFormatter.string(from: commit.date))
+        default: return nil
+        }
     }
 }

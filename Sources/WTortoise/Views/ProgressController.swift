@@ -8,6 +8,7 @@ final class ProgressController: ToolWindow {
     private let text: NSTextView
     private let bar = NSProgressIndicator()
     private var closeControl: ClosureButton!
+    private var abortControl: ClosureButton!
     private var extraButtons: [ClosureButton] = []
     private var task: GitTask?
     private var started = Date()
@@ -51,7 +52,9 @@ final class ProgressController: ToolWindow {
         let content = UI.column([scroll, bar])
         scroll.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         bar.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        closeControl = ClosureButton(L.t("Прервать", "Abort"), key: "\u{1b}") { [weak self] in self?.closeOrAbort() }
+        closeControl = ClosureButton(L.t("Закрыть", "Close"), key: "\r") { [weak self] in self?.close() }
+        closeControl.isEnabled = false
+        abortControl = ClosureButton(L.t("Прервать", "Abort"), key: "\u{1b}") { [weak self] in self?.closeOrAbort() }
         extraButtons = extra.map { title, action in
             let button = ClosureButton(title) { [weak self] in
                 // Сначала следующее окно, потом закрываем это: программа выходит, когда окон не осталось.
@@ -64,7 +67,7 @@ final class ProgressController: ToolWindow {
         // Появляется, только если сервер отказал в доступе.
         signInButton = ClosureButton(L.t("Войти…", "Sign in...")) { [weak self] in self?.signIn() }
         signInButton.isHidden = true
-        install(content, buttons: [signInButton] + extraButtons + [closeControl])
+        install(content, buttons: [closeControl, abortControl], leading: extraButtons + [signInButton])
         bar.startAnimation(nil)
     }
 
@@ -99,8 +102,8 @@ final class ProgressController: ToolWindow {
     private func finish(status: Int32) {
         bar.stopAnimation(nil)
         bar.isHidden = true
-        closeControl.title = L.t("Закрыть", "Close")
-        closeControl.keyEquivalent = "\r"
+        closeControl.isEnabled = true
+        abortControl.isEnabled = false
         if status != 0 {
             append(L.t("git завершился с ошибкой (код \(status))\n", "git did not exit cleanly (exit code \(status))\n"),
                    color: NSColor(hex: 0xD00000), bold: true)
@@ -251,7 +254,7 @@ final class LoginDialog: ToolWindow {
         hint.preferredMaxLayoutWidth = 420
         form.wide(hint)
         form.wide(rememberBox)
-        install(form.grid, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.submit() }, cancelButton])
+        install(form.view, buttons: [ClosureButton("OK", key: "\r") { [weak self] in self?.submit() }, cancelButton])
         window?.initialFirstResponder = user.stringValue.isEmpty ? user : password
         if Snapshot.active, codeRow != nil {
             codeLabel.stringValue = "ABCD-1234"
